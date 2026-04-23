@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Tesseract assets (large binaries)
+extension/assets/worker.min.js
+extension/assets/tesseract-core-simd.wasm.js
+extension/assets/*.traineddata.gz
+
+# Local models
+*.onnx
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
