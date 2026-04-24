@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unified Platform",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Text Captcha · MCQ Exam Solver · Autofill V26 — All-in-one browser assistant",
 
   "permissions": [
@@ -10,7 +10,8 @@
     "unlimitedStorage",
     "tabs",
     "downloads",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
 
   "host_permissions": [

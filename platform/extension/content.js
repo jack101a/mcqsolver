@@ -82,18 +82,47 @@
             return String(h || '').replace(/^www\./, '').toLowerCase();
         }
 
-        function fillInput(inp, value) {
-            // Native setter — works with React/Angular/Vue controlled inputs
+        // Set value via native setter (React/Angular/Vue safe)
+        function setNativeVal(el, value) {
             try {
-                const proto = inp instanceof HTMLTextAreaElement
+                const proto = el instanceof HTMLTextAreaElement
                     ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-                const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                if (nativeSetter) nativeSetter.call(inp, value);
-                else inp.value = value;
-            } catch (_) { inp.value = value; }
-            ['input', 'change', 'blur', 'keyup'].forEach(t =>
-                inp.dispatchEvent(new Event(t, { bubbles: true }))
-            );
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (setter) setter.call(el, value);
+                else el.value = value;
+            } catch (_) { el.value = value; }
+        }
+
+        // Human-like typing: clears field then types character by character
+        async function humanType(inp, text) {
+            inp.focus();
+            // Clear existing value first
+            setNativeVal(inp, '');
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+
+            await new Promise(r => setTimeout(r, rndInt(80, 200))); // brief focus pause
+
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                const keyOpts = { key: ch, bubbles: true, cancelable: true };
+
+                inp.dispatchEvent(new KeyboardEvent('keydown',  keyOpts));
+                inp.dispatchEvent(new KeyboardEvent('keypress', keyOpts));
+
+                // Set value up to this char
+                setNativeVal(inp, text.slice(0, i + 1));
+                inp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+
+                inp.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
+
+                // Random inter-key delay: 40–130ms, occasional longer pause
+                const pause = Math.random() < 0.1 ? rndInt(250, 500) : rndInt(40, 130);
+                await new Promise(r => setTimeout(r, pause));
+            }
+
+            await new Promise(r => setTimeout(r, rndInt(60, 160)));
+            inp.dispatchEvent(new Event('change', { bubbles: true }));
+            inp.dispatchEvent(new Event('blur',   { bubbles: true }));
         }
 
         // Priority 1: server-synced domain field routes
@@ -171,8 +200,7 @@
 
             _solvedMap.set(cacheKey, b64Key);
             await humanMouse(inp);
-            inp.focus();
-            fillInput(inp, resp.result);
+            await humanType(inp, resp.result);
             console.log(`[Captcha] ✓ "${resp.result}" in ${resp.ms}ms (${domain})`);
         }
 
@@ -201,6 +229,7 @@
                 console.log('[Captcha] Module active (route-aware)');
             },
             deactivate() { _active = false; },
+            resetCache() { _solvedMap.clear(); }, // called when routes update
         };
     })();
 
@@ -641,6 +670,11 @@
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (msg.type === 'TOGGLE_RECORD') AutofillModule.toggleRecording(msg.state);
             if (msg.type === 'FORCE_AUTOFILL') AutofillModule.activate();
+            // Background pushes this when routes are updated — no page reload needed
+            if (msg.type === 'ROUTES_UPDATED') {
+                console.log('[Content] Routes updated by background sync — applying immediately');
+                CaptchaModule.resetCache && CaptchaModule.resetCache();
+            }
         });
     }
 
