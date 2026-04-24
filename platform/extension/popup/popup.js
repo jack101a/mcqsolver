@@ -1,6 +1,6 @@
 'use strict';
 
-const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'apiKey', 'serverUrl'];
+const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'apiKey', 'serverUrl', 'theme'];
 
 function el(id) { return document.getElementById(id); }
 
@@ -21,6 +21,8 @@ chrome.storage.local.get(KEYS, data => {
     } else {
         setStatus('No API key — open Settings', 'err');
     }
+
+    applyTheme(data.theme || 'dark');
 });
 
 // Toggle listeners
@@ -94,4 +96,17 @@ chrome.storage.local.get(['statCaptcha', 'statExam', 'statFill'], d => {
     el('u-captcha').textContent = d.statCaptcha || 0;
     el('u-exam').textContent    = d.statExam    || 0;
     el('u-fill').textContent    = d.statFill    || 0;
+});
+// Theme logic
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    el('themeToggleBtn').textContent = theme === 'light' ? '🌙' : '☀️';
+}
+
+el('themeToggleBtn').addEventListener('click', () => {
+    chrome.storage.local.get('theme', data => {
+        const newTheme = (data.theme === 'light') ? 'dark' : 'light';
+        applyTheme(newTheme);
+        chrome.storage.local.set({ theme: newTheme });
+    });
 });

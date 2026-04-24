@@ -10,14 +10,27 @@
     // ═══════════════════════════════════════════════════════════════════════
 
     function getStorage(keys) {
-        return new Promise(resolve => chrome.storage.local.get(keys, resolve));
+        return new Promise(resolve => {
+            if (typeof chrome === 'undefined' || !chrome.runtime?.id) return resolve({});
+            try {
+                const p = chrome.storage.local.get(keys, resolve);
+                if (p && typeof p.catch === 'function') {
+                    p.catch(() => resolve({}));
+                }
+            } catch (e) {
+                resolve({});
+            }
+        });
     }
 
     function imgToB64(imgEl) {
         try {
+            const w = imgEl.naturalWidth  || imgEl.width  || 0;
+            const h = imgEl.naturalHeight || imgEl.height || 0;
+            if (w === 0 || h === 0) return null; // image not yet loaded
             const canvas = document.createElement('canvas');
-            canvas.width  = imgEl.naturalWidth  || imgEl.width  || 200;
-            canvas.height = imgEl.naturalHeight || imgEl.height || 60;
+            canvas.width  = w;
+            canvas.height = h;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
             return canvas.toDataURL('image/png');
@@ -26,7 +39,15 @@
 
     function sendMsg(type, payload) {
         return new Promise(resolve => {
-            chrome.runtime.sendMessage({ type, ...payload }, resolve);
+            if (typeof chrome === 'undefined' || !chrome.runtime?.id) return resolve({});
+            try {
+                const p = chrome.runtime.sendMessage({ type, ...payload }, resolve);
+                if (p && typeof p.catch === 'function') {
+                    p.catch(() => resolve({}));
+                }
+            } catch (e) {
+                resolve({});
+            }
         });
     }
 
@@ -118,6 +139,7 @@
             TOTAL_QUESTIONS:   15,
             REQUIRED_CORRECT:  9,
             MAX_WRONG:         6,
+            ABORT_MIN_Q:       5,   // don't abort before Q5 — give solver a chance
             CLICK_MIN:         12000,
             CLICK_MAX:         19000,
             DEADLINE:          29000,
@@ -456,7 +478,7 @@
         }
 
         async function runEngine() {
-            if (!_active || _recording) return;
+            if (!_active || _recording || typeof chrome === 'undefined' || !chrome.runtime?.id) return;
             const data = await getStorage(['rules', 'profiles', 'activeProfileId', 'autofillSettings']);
             const settings = { ...DEFAULT_SETTINGS, ...data.autofillSettings };
             const profiles = data.profiles || [];
@@ -508,7 +530,15 @@
         return {
             activate() {
                 _active = true;
-                _mutationObs = new MutationObserver(() => runEngine());
+                // Debounce: avoid flooding runEngine() on rapid DOM mutations (SPA routing)
+                let _mutationTimer = null;
+                _mutationObs = new MutationObserver(() => {
+                    if (_mutationTimer) return;
+                    _mutationTimer = setTimeout(() => {
+                        _mutationTimer = null;
+                        runEngine();
+                    }, 300);
+                });
                 _mutationObs.observe(document.body, { childList: true, subtree: true });
                 document.addEventListener('change', handleInteraction, true);
                 runEngine();

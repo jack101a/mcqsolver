@@ -10,8 +10,15 @@ let state = {
     profiles: [],
     activeProfileId: 'default',
     rules: [],
-    settings: {}
+    settings: {},
+    theme: 'dark'
 };
+
+function storageGet(keys) {
+    return new Promise(resolve => {
+        chrome.storage.local.get(keys, resolve);
+    });
+}
 
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -36,8 +43,11 @@ function showMsg(msgId, text, isOk = true) {
 
 // ── Initialization ───────────────────────────────────────────────────────────
 async function init() {
-    const data = await chrome.storage.local.get(['apiKey', 'serverUrl', 'profiles', 'activeProfileId', 'rules', 'autofillSettings', 'captchaEnabled', 'solverEnabled', 'autofillEnabled', 'autoRefresh', 'autoScreenshot']);
+    const data = await storageGet(['apiKey', 'serverUrl', 'profiles', 'activeProfileId', 'rules', 'autofillSettings', 'captchaEnabled', 'solverEnabled', 'autofillEnabled', 'autoRefresh', 'autoScreenshot', 'theme']);
     
+    // Theme
+    state.theme = data.theme || 'dark';
+    applyTheme(state.theme);
     // Connection
     if (data.apiKey)    el('api-key').value    = data.apiKey;
     if (data.serverUrl) el('server-url').value = data.serverUrl;
@@ -58,9 +68,9 @@ async function init() {
     el('tog-autofill').checked = data.autofillEnabled!== false;
     
     const settings = data.autofillSettings || { skipHidden: true, skipLocked: true, skipPassword: true };
-    el('set-skip-hidden').checked = settings.skipHidden !== false;
-    el('set-skip-locked').checked = settings.skipLocked !== false;
-    el('set-skip-password').checked = settings.skipPassword !== false;
+    if (el('set-skip-hidden')) el('set-skip-hidden').checked = settings.skipHidden !== false;
+    if (el('set-skip-locked')) el('set-skip-locked').checked = settings.skipLocked !== false;
+    if (el('set-skip-password')) el('set-skip-password').checked = settings.skipPassword !== false;
 
     // Exam
     el('tog-refresh').checked    = data.autoRefresh    !== false;
@@ -158,7 +168,7 @@ el('btn-test').addEventListener('click', () => {
 async function verifyKey(apiKey, serverUrl) {
     showMsg('conn-msg', 'Verifying…');
     try {
-        const resp = await fetch(`${serverUrl}/v1/verify`, {
+        const resp = await fetch(`${serverUrl}/v1/auth/verify`, {
             headers: { 'X-API-Key': apiKey }
         });
         const data = await resp.json();
@@ -256,7 +266,7 @@ el('rules-table').addEventListener('click', e => {
 
 // ── Server Sync ──────────────────────────────────────────────────────────────
 el('rules-sync-btn').addEventListener('click', async () => {
-    const { apiKey, serverUrl } = await chrome.storage.local.get(['apiKey', 'serverUrl']);
+    const { apiKey, serverUrl } = await storageGet(['apiKey', 'serverUrl']);
     if (!apiKey || !serverUrl) return showMsg('rules-msg', 'Set API credentials first', false);
 
     showMsg('rules-msg', 'Syncing…');
@@ -282,7 +292,7 @@ el('rules-propose-btn').addEventListener('click', async () => {
     const selectedIdx = Array.from(document.querySelectorAll('.rule-sel:checked')).map(cb => cb.dataset.id);
     if (!selectedIdx.length) return alert('Select rules to propose first.');
 
-    const { apiKey, serverUrl } = await chrome.storage.local.get(['apiKey', 'serverUrl']);
+    const { apiKey, serverUrl } = await storageGet(['apiKey', 'serverUrl']);
     if (!apiKey || !serverUrl) return alert('Set API credentials first.');
 
     showMsg('rules-msg', `Proposing ${selectedIdx.length} rules…`);
@@ -321,16 +331,16 @@ el('tog-autofill').addEventListener('change', e => chrome.storage.local.set({ au
 
 function saveSettings() {
     const settings = {
-        skipHidden: el('set-skip-hidden').checked,
-        skipLocked: el('set-skip-locked').checked,
-        skipPassword: el('set-skip-password').checked
+        skipHidden: el('set-skip-hidden')?.checked,
+        skipLocked: el('set-skip-locked')?.checked,
+        skipPassword: el('set-skip-password')?.checked
     };
     chrome.storage.local.set({ autofillSettings: settings });
 }
 
-el('set-skip-hidden').addEventListener('change', saveSettings);
-el('set-skip-locked').addEventListener('change', saveSettings);
-el('set-skip-password').addEventListener('change', saveSettings);
+if (el('set-skip-hidden')) el('set-skip-hidden').addEventListener('change', saveSettings);
+if (el('set-skip-locked')) el('set-skip-locked').addEventListener('change', saveSettings);
+if (el('set-skip-password')) el('set-skip-password').addEventListener('change', saveSettings);
 
 // ── Exam Tab ──────────────────────────────────────────────────────────────────
 el('btn-save-exam').addEventListener('click', () => {
@@ -338,6 +348,19 @@ el('btn-save-exam').addEventListener('click', () => {
         autoRefresh:    el('tog-refresh').checked,
         autoScreenshot: el('tog-screenshot').checked,
     }, () => showMsg('exam-msg', '✓ Exam settings saved'));
+});
+
+// ── Theme Management ─────────────────────────────────────────────────────────
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = el('themeToggleBtn');
+    if (btn) btn.textContent = theme === 'light' ? '🌙' : '☀️';
+}
+
+el('themeToggleBtn').addEventListener('click', () => {
+    state.theme = state.theme === 'light' ? 'dark' : 'light';
+    applyTheme(state.theme);
+    chrome.storage.local.set({ theme: state.theme });
 });
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────

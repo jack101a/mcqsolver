@@ -59,6 +59,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return true;
     }
 
+    // ── Verify API Key ───────────────────────────────────────────────────
+    if (msg.type === 'VERIFY_KEY') {
+        apiGet('/v1/auth/verify')
+        .then(data => sendResponse({ ok: true, data }))
+        .catch(err => sendResponse({ ok: false, error: err.message }));
+        return true;
+    }
+
     // ── Exam Solver ──────────────────────────────────────────────────────
     if (msg.type === 'SOLVE_EXAM') {
         apiPost('/v1/exam/solve', {
@@ -87,7 +95,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'CAPTURE_SCREENSHOT') {
         const tabId = sender.tab?.id;
         if (!tabId) return false;
-        chrome.tabs.captureVisibleTab(null, { format: 'png', quality: 100 }, dataUrl => {
+        // Omit the windowId argument (was null — deprecated in MV3) to target
+        // the current focused window automatically.
+        chrome.tabs.captureVisibleTab({ format: 'png', quality: 100 }, dataUrl => {
             if (chrome.runtime.lastError || !dataUrl) return;
             const ts       = new Date().toISOString().replace(/[:.]/g, '-').replace('T','_').slice(0,19);
             const filename = `result_${ts}.png`;
