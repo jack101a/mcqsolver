@@ -17,6 +17,9 @@ from app.models.schemas import (
     AutofillFillRequest,
     AutofillFillResponse,
     AutofillProposeRequest,
+    AutofillRuleProposalRequest,
+    AutofillRuleSyncResponse,
+    AutofillRule,
     ExamSolveRequest,
     ExamSolveResponse,
     FieldMappingProposeRequest,
@@ -256,22 +259,43 @@ async def autofill_domain_routes(request: Request, domain: str) -> dict:
     return container.autofill_service.get_field_routes(normalized)
 
 
-@router.post("/autofill/propose")
-async def autofill_propose(request: Request, payload: AutofillProposeRequest) -> dict:
-    """Extension proposes a new field mapping for admin review."""
-    container  = request.app.state.container
+@router.post("/autofill/proposals")
+async def autofill_rule_proposals(request: Request, payload: AutofillRuleProposalRequest) -> dict:
+    """Extension submits a recorded rule (V26 engine) for admin review."""
+    container = request.app.state.container
     key_record = request.state.api_key_record
-    container.autofill_service.propose_rule(
-        domain=payload.domain,
-        task_type=payload.task_type,
-        source_data_type=payload.source_data_type,
-        source_selector=payload.source_selector,
-        target_data_type=payload.target_data_type,
-        target_selector=payload.target_selector,
-        proposed_field_name=payload.proposed_field_name,
-        reported_by=int(key_record["id"]),
+    
+    # rule_json stores the full 'rule' part of the payload
+    rule_json = payload.rule.model_dump_json()
+    
+    proposal = container.db.submit_autofill_proposal(
+        idempotency_key=payload.idempotency_key,
+        device_id=payload.client.device_id,
+        api_key_id=int(key_record["id"]),
+        rule_json=rule_json,
+        submitted_at=payload.submitted_at,
     )
-    return {"status": "proposed"}
+    return {"status": "accepted", "proposal_id": proposal.get("id")}
+
+
+@router.get("/autofill/sync", response_model=AutofillRuleSyncResponse)
+async def autofill_sync(request: Request) -> AutofillRuleSyncResponse:
+    """Extension downloads approved rules (V26 engine) for local playback."""
+    container = request.app.state.container
+    approved_rows = container.db.get_approved_autofill_rules()
+    
+    rules: list[AutofillRule] = []
+    import json
+    for row in approved_rows:
+        try:
+            # Parse the stored rule_json and inject the server_rule_id
+            rule_data = json.loads(row["rule_json"])
+            rule_data["server_rule_id"] = row["approved_rule_id"]
+            rules.append(AutofillRule(**rule_data))
+        except Exception:
+            logger.exception("failed_to_parse_approved_rule", extra={"context": {"id": row["id"]}})
+            
+    return AutofillRuleSyncResponse(rules=rules)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -75,6 +75,58 @@ class AutofillProposeRequest(BaseModel):
     proposed_field_name: str = Field(min_length=1)
 
 
+# ── Autofill Rule Proposals (V26 Engine) ──────────────────────────────────────
+class AutofillRuleStepSelector(BaseModel):
+    strategy: str
+    id: str = ""
+    name: str = ""
+    css: str = ""
+
+
+class AutofillRuleStep(BaseModel):
+    order: int
+    action: str
+    value: Any = None
+    selector: AutofillRuleStepSelector
+
+
+class AutofillRuleSite(BaseModel):
+    match_mode: str
+    pattern: str
+
+
+class AutofillRule(BaseModel):
+    local_rule_id: str | None = None
+    server_rule_id: str | None = None
+    name: str | None = None
+    status: str | None = None
+    site: AutofillRuleSite
+    profile_scope: str = "default"
+    frame_path: str = "any"
+    priority: int = 100
+    steps: list[AutofillRuleStep]
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutofillRuleClient(BaseModel):
+    extension_version: str
+    schema_version: int
+    device_id: str
+    browser: str
+    os: str
+
+
+class AutofillRuleProposalRequest(BaseModel):
+    idempotency_key: str = Field(min_length=5)
+    submitted_at: str
+    client: AutofillRuleClient
+    rule: AutofillRule
+
+
+class AutofillRuleSyncResponse(BaseModel):
+    rules: list[AutofillRule]
+
+
 # ── Auth / Keys ───────────────────────────────────────────────────────────────
 class VerifyResponse(BaseModel):
     valid: bool

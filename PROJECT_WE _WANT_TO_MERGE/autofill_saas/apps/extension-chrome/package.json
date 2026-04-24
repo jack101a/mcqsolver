@@ -1,0 +1,13 @@
+{
+  "name": "@autofill/extension-chrome",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"Package static files for Chrome extension\"",
+    "validate:autofill": "node scripts/validate-autofill.mjs"
+  },
+  "dependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

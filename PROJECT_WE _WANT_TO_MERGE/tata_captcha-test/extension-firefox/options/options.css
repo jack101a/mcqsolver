@@ -1,0 +1,52 @@
+body {
+  margin: 0;
+  padding: 20px;
+  background: #0b1220;
+  color: #e2e8f0;
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+.panel {
+  max-width: 540px;
+}
+
+label {
+  display: block;
+  margin-top: 12px;
+  color: #94a3b8;
+}
+
+input {
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 8px;
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 8px;
+}
+
+.task-group {
+  margin-top: 14px;
+  display: flex;
+  gap: 16px;
+}
+
+.task-group label {
+  color: #e2e8f0;
+}
+
+button {
+  margin-top: 16px;
+  border: 1px solid #38bdf8;
+  background: #0369a1;
+  color: #f8fafc;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+#statusLine {
+  margin-top: 10px;
+  color: #94a3b8;
+}
+

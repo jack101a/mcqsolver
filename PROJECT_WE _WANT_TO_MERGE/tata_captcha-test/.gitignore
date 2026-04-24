@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+backend/logs/
+backend/admin-ui/node_modules/
+backend/admin-ui/dist/
+extension/dist/
+dist/
+datasets/
+models/

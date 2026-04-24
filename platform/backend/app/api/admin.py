@@ -1425,3 +1425,132 @@ async def notify_key_alert(request: Request, key_name: str = Form(...), expires_
     container.alert_service.notify_new_key(key_name=key_name, expires_at=expires_at or None)
     return {"ok": True}
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Platform Settings (Admin Dashboard → DB → Runtime)
+# Configure LiteLLM, OCR, WhatsApp, etc. without touching .env
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/api/settings")
+async def get_settings(request: Request):
+    """Return all platform settings for admin display."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    settings_list = container.db.get_all_settings()
+    # Mask secrets for display
+    masked = []
+    SECRET_KEYS = {"exam.litellm_api_key", "alerts.callmebot_apikey"}
+    for s in settings_list:
+        row = dict(s)
+        if row["key"] in SECRET_KEYS and row["value"]:
+            row["value_display"] = row["value"][:4] + "****" + row["value"][-2:]
+            row["is_secret"] = True
+        else:
+            row["value_display"] = row["value"]
+            row["is_secret"] = False
+        masked.append(row)
+    return {"settings": masked}
+
+
+@router.post("/api/settings")
+async def save_setting(
+    request: Request,
+    key: str = Form(...),
+    value: str = Form(...),
+):
+    """Save a single platform setting to the DB."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    key   = key.strip()
+    value = value.strip()
+    if not key:
+        raise HTTPException(400, "key is required")
+    container.db.set_setting(key, value)
+
+    # If WhatsApp settings changed, update the display (alert service reads from DB live)
+    return {"ok": True, "key": key, "saved": True}
+
+
+@router.post("/api/settings/bulk")
+async def save_settings_bulk(request: Request):
+    """
+    Save multiple settings at once from a JSON body.
+    Body: { "settings": { "key1": "value1", "key2": "value2" } }
+    """
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    try:
+        body = await request.json()
+        settings_dict = body.get("settings", {})
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+    if not isinstance(settings_dict, dict):
+        raise HTTPException(400, "settings must be an object")
+    saved = []
+    for key, value in settings_dict.items():
+        key   = str(key).strip()
+        value = str(value).strip()
+        if key:
+            container.db.set_setting(key, value)
+            saved.append(key)
+    return {"ok": True, "saved_keys": saved}
+
+
+# ── Autofill Proposals ────────────────────────────────────────────────────────
+
+@router.get("/api/autofill/proposals")
+async def get_autofill_proposals(request: Request) -> JSONResponse:
+    """List proposals for admin review."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    status = request.query_params.get("status")
+    proposals = container.db.get_autofill_proposals(status=status)
+    return JSONResponse(proposals)
+
+
+@router.post("/api/autofill/proposals/{proposal_id}/approve")
+async def approve_autofill_proposal(request: Request, proposal_id: int) -> JSONResponse:
+    """Approve a proposal and generate a server_rule_id."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    try:
+        server_rule_id = container.db.approve_autofill_proposal(proposal_id, reviewed_by="admin")
+        return JSONResponse({"ok": True, "server_rule_id": server_rule_id})
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/api/autofill/proposals/{proposal_id}/reject")
+async def reject_autofill_proposal(request: Request, proposal_id: int) -> JSONResponse:
+    """Reject a proposal."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    container.db.reject_autofill_proposal(proposal_id, reviewed_by="admin")
+    return JSONResponse({"ok": True})
+
+
+# ── Exam Stats ───────────────────────────────────────────────────────────────
+
+@router.get("/api/exam/stats")
+async def get_exam_stats(request: Request) -> JSONResponse:
+    """Get high-level MCQ/exam statistics."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    stats = container.db.get_exam_stats()
+    return JSONResponse(stats)
+
+

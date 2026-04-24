@@ -1,5 +1,5 @@
-// content.js — Unified Platform Extension
-// Three autonomous modules: CaptchaModule, ExamModule, AutofillModule
+// content.js — Unified Platform Extension (V2.1)
+// Three autonomous modules: CaptchaModule, ExamModule, AutofillModule (V26 Engine)
 // Each detects its own trigger condition and acts independently.
 
 (function () {
@@ -58,7 +58,6 @@
         let _lastSolved = '';
 
         function findCaptchaPair() {
-            // Common patterns: image near text input
             const imgs = [...document.querySelectorAll('img')].filter(img => {
                 const src  = img.src || '';
                 const w    = img.naturalWidth  || img.width;
@@ -69,7 +68,6 @@
                         img.className?.toLowerCase().includes('captcha'));
             });
             for (const img of imgs) {
-                // Find nearest text input
                 const parent = img.closest('form, div, td, tr') || document.body;
                 const inp = parent.querySelector(
                     'input[type="text"], input[type="tel"], input:not([type])'
@@ -105,14 +103,13 @@
         }
 
         return {
-            activate() { _active = true; setInterval(tick, 2000); console.log('[Captcha] Module active'); },
+            activate() { _active = true; setInterval(tick, 2500); console.log('[Captcha] Module active'); },
             deactivate() { _active = false; },
         };
     })();
 
     // ═══════════════════════════════════════════════════════════════════════
     // MODULE 2 — EXAM SOLVER (Sarathi STALL)
-    // Only activates on stallexamaction.do — everything else returns early.
     // ═══════════════════════════════════════════════════════════════════════
 
     const ExamModule = (() => {
@@ -121,7 +118,6 @@
             TOTAL_QUESTIONS:   15,
             REQUIRED_CORRECT:  9,
             MAX_WRONG:         6,
-            ABORT_MIN_Q:       14,
             CLICK_MIN:         12000,
             CLICK_MAX:         19000,
             DEADLINE:          29000,
@@ -141,8 +137,6 @@
             refreshTimer:  null,
             enabled:       true,
         };
-
-        // ── Panel UI ──────────────────────────────────────────────────────
 
         let panelEls = null;
 
@@ -195,7 +189,6 @@
             panelEls.result.textContent = text;
         }
 
-        // ── DOM helpers ───────────────────────────────────────────────────
         const getQNum  = () => document.querySelector('span.mytext1')?.innerText?.trim() || '?';
         const getTimer = () => document.getElementById('timer')?.innerText?.trim()       || '—';
         const getScore = () => document.getElementById('score')?.innerText?.trim()       || '—';
@@ -269,7 +262,6 @@
                 const doSubmit = async () => {
                     clearInterval(iv);
                     await humanMouse(btn);
-                    await new Promise(r => setTimeout(r, rndInt(80, 300)));
                     btn.disabled = false;
                     btn.click();
                     if (isLast) {
@@ -278,9 +270,7 @@
                         watchForResult();
                     }
                 };
-                if (!btn.disabled) { await doSubmit(); return; }
-                if (Date.now() >= deadline) { await doSubmit(); return; }
-                if (Date.now() > deadline + 3000) clearInterval(iv);
+                if (!btn.disabled || Date.now() >= deadline) { await doSubmit(); return; }
             }, CFG.SUBMIT_POLL);
         }
 
@@ -305,7 +295,6 @@
             const qSrc = getQImage();
             if (!qSrc || qSrc === state.lastQSrc || state.processing) return;
 
-            // Score reconciliation
             if (state.prevScore >= 0 && state.totalSeen > 0) {
                 const curr = parseScore();
                 if (curr > state.prevScore) state.correctCount++;
@@ -325,19 +314,13 @@
             state.questionStart = Date.now();
             armWatchdog(qSrc);
 
-            const optImgs = getOptImgs();
             setStatus('Solving…', 'work');
 
             try {
-                const optB64s = optImgs.map(src => {
-                    // If src is an absolute URL the backend can fetch it,
-                    // otherwise capture via canvas
-                    return src.startsWith('data:') ? src : src;
-                });
-
+                const optImgs = getOptImgs();
                 const resp = await sendMsg('SOLVE_EXAM', {
                     questionB64: qSrc,
-                    optionB64s:  optB64s,
+                    optionB64s:  optImgs,
                     domain:      window.location.hostname,
                 });
 
@@ -346,7 +329,6 @@
                     setStatus(`✓ ${resp.data.method} (${resp.data.processing_ms}ms)`, 'ok');
                     setResult(`Option ${optNum}: ${resp.data.answer_text || ''}`);
 
-                    // Human-like timing gate
                     const delay = rndInt(CFG.CLICK_MIN, CFG.CLICK_MAX);
                     const elapsed = Date.now() - state.questionStart;
                     if (elapsed < delay) await new Promise(r => setTimeout(r, delay - elapsed));
@@ -358,13 +340,12 @@
                     waitAndSubmit(deadline, isLast);
                 } else {
                     setStatus('✗ No Match', 'fail');
-                    setResult(resp?.error || 'No answer found — question will time out');
+                    setResult(resp?.error || 'No answer found');
                 }
             } catch (err) {
                 setStatus('✗ Error', 'fail');
                 setResult(err.message);
             }
-
             state.processing = false;
         }
 
@@ -372,9 +353,7 @@
             activate() {
                 if (!/stallexamaction/i.test(window.location.href)) return;
                 createPanel();
-                getStorage(['solverEnabled', 'autoRefresh']).then(d => {
-                    state.enabled = d.solverEnabled !== false;
-                });
+                getStorage(['solverEnabled']).then(d => state.enabled = d.solverEnabled !== false);
                 seedFromPage();
                 setInterval(mainLoop, CFG.POLL_MS);
                 console.log('[Exam] Module active');
@@ -383,111 +362,184 @@
     })();
 
     // ═══════════════════════════════════════════════════════════════════════
-    // MODULE 3 — AUTOFILL
-    // Detects forms and fills them using server-resolved field mappings.
+    // MODULE 3 — AUTOFILL ENGINE (V26)
+    // Local playback engine with multi-profile and recorder support.
     // ═══════════════════════════════════════════════════════════════════════
 
     const AutofillModule = (() => {
         let _active = false;
-        let _filled = new WeakSet();
+        let _recording = false;
+        let _filledElements = new WeakSet();
+        let _mutationObs = null;
 
-        function collectFields() {
-            const inputs = document.querySelectorAll(
-                'input[type="text"], input[type="email"], input[type="tel"], ' +
-                'input[type="date"], input[type="number"], input:not([type]), ' +
-                'textarea, select'
-            );
-            const out = [];
-            for (const inp of inputs) {
-                if (_filled.has(inp)) continue;
-                if (inp.value?.trim()) continue; // already has a value
-                const id    = inp.id || '';
-                const name  = inp.name || '';
-                const label = (
-                    document.querySelector(`label[for="${id}"]`)?.innerText ||
-                    inp.placeholder || inp.getAttribute('aria-label') || name || id
-                ).trim();
-                if (!label) continue;
-                // Use the most stable selector available
-                const sel = id ? `#${id}` : (name ? `[name="${name}"]` : null);
-                if (sel) out.push({ selector: sel, label });
-            }
-            return out;
+        const SCHEMA_VERSION = 2;
+        const DEFAULT_SETTINGS = {
+            skipHidden: true,
+            skipLocked: true,
+            skipPassword: true,
+            maxRetries: 5,
+            retryInterval: 1000
+        };
+
+        // ── Selection Logic ───────────────────────────────────────────────
+
+        function findBestElement(selectorObj) {
+            const { strategy, id, name, css } = selectorObj;
+            if (strategy === 'id' && id) return document.getElementById(id);
+            if (strategy === 'name' && name) return document.querySelector(`[name="${name}"]`);
+            if (strategy === 'css' && css) return document.querySelector(css);
+            return null;
         }
 
-        async function fill() {
-            const { autofillEnabled, profileData } = await getStorage(['autofillEnabled', 'profileData']);
-            if (!autofillEnabled) return;
-            const profile = profileData || {};
-            if (!Object.keys(profile).length) return;
-
-            const fields = collectFields();
-            if (!fields.length) return;
-
-            const domain = window.location.hostname;
-            const resp   = await sendMsg('AUTOFILL_FILL', { domain, fields, profileData: profile });
-            if (!resp?.ok || !resp.fills?.length) return;
-
-            for (const { selector, value } of resp.fills) {
-                try {
-                    const el = document.querySelector(selector);
-                    if (!el || el.value?.trim()) continue;
-                    await humanMouse(el);
-                    el.focus();
-                    el.value = value;
-                    el.dispatchEvent(new Event('input',  { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.blur();
-                    _filled.add(el);
-                } catch (_) {}
+        function setNativeValue(el, value) {
+            const { set: valueSetter } = Object.getOwnPropertyDescriptor(el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value') || {};
+            if (valueSetter && valueSetter !== Object.getOwnPropertyDescriptor(el, 'value')?.set) {
+                valueSetter.call(el, value);
+            } else {
+                el.value = value;
             }
-            console.log(`[Autofill] Filled ${resp.fills.length} fields on ${domain}`);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        // ── Rule Engine ───────────────────────────────────────────────────
+
+        function matchRule(rule) {
+            const url = window.location.href;
+            const site = rule.site;
+            if (!site?.pattern) return false;
+            
+            if (site.match_mode === 'domain') return window.location.hostname === site.pattern;
+            if (site.match_mode === 'domainPath') return url.includes(site.pattern);
+            if (site.match_mode === 'fullUrl') return url === site.pattern;
+            return false;
+        }
+
+        async function executeRule(rule, profileData, settings) {
+            if (!rule.steps?.length) return;
+            for (const step of rule.steps) {
+                const el = findBestElement(step.selector);
+                if (!el || _filledElements.has(el)) continue;
+
+                // Guards
+                if (settings.skipHidden && el.offsetParent === null) continue;
+                if (settings.skipLocked && (el.disabled || el.readOnly)) continue;
+                if (settings.skipPassword && el.type === 'password') continue;
+
+                // Resolve Value (Profile Tokens)
+                let fillValue = step.value || '';
+                if (fillValue.startsWith('{{') && fillValue.endsWith('}}')) {
+                    const key = fillValue.slice(2, -2);
+                    fillValue = profileData[key] || '';
+                }
+
+                if (!fillValue && step.action !== 'click') continue;
+
+                try {
+                    await humanMouse(el);
+                    if (step.action === 'text') {
+                        setNativeValue(el, fillValue);
+                    } else if (step.action === 'select') {
+                        el.value = fillValue;
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else if (step.action === 'checkbox' || step.action === 'radio') {
+                        el.checked = (fillValue === 'true' || fillValue === true || fillValue === '1');
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else if (step.action === 'click') {
+                        el.click();
+                    }
+                    _filledElements.add(el);
+                } catch (e) {
+                    console.error('[Autofill] Step failed:', e);
+                }
+            }
+        }
+
+        async function runEngine() {
+            if (!_active || _recording) return;
+            const data = await getStorage(['rules', 'profiles', 'activeProfileId', 'autofillSettings']);
+            const settings = { ...DEFAULT_SETTINGS, ...data.autofillSettings };
+            const profiles = data.profiles || [];
+            const activeId = data.activeProfileId || 'default';
+            const profile = profiles.find(p => p.id === activeId) || profiles[0] || { data: {} };
+            const rules = data.rules || [];
+
+            const matchedRules = rules.filter(matchRule).sort((a,b) => (b.priority || 100) - (a.priority || 100));
+            if (!matchedRules.length) return;
+
+            for (const rule of matchedRules) {
+                await executeRule(rule, profile.data, settings);
+            }
+        }
+
+        // ── Recorder ──────────────────────────────────────────────────────
+
+        function generateSelector(el) {
+            if (el.id) return { strategy: 'id', id: el.id };
+            if (el.name) return { strategy: 'name', name: el.name };
+            return { strategy: 'css', css: el.tagName.toLowerCase() + (el.className ? '.' + el.className.split(' ').join('.') : '') };
+        }
+
+        function handleInteraction(e) {
+            if (!_recording) return;
+            const el = e.target;
+            if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return;
+
+            let action = 'text';
+            if (el.type === 'checkbox') action = 'checkbox';
+            else if (el.type === 'radio') action = 'radio';
+            else if (el.tagName === 'SELECT') action = 'select';
+
+            const rule = {
+                site: { match_mode: 'domainPath', pattern: window.location.hostname + window.location.pathname },
+                steps: [{
+                    order: 1,
+                    action,
+                    value: (action === 'checkbox' || action === 'radio') ? el.checked : el.value,
+                    selector: generateSelector(el)
+                }]
+            };
+
+            console.log('[Autofill] Recorded interaction:', rule);
+            // Save logic would typically go to background script to append to storage
+            sendMsg('RECORD_STEP', { rule });
         }
 
         return {
             activate() {
                 _active = true;
-                // Fill on page load
-                if (document.readyState === 'complete') fill();
-                else window.addEventListener('load', fill);
-                // Observe DOM for dynamically injected forms
-                new MutationObserver(() => { if (_active) fill(); })
-                    .observe(document.body, { childList: true, subtree: true });
-                console.log('[Autofill] Module active');
+                _mutationObs = new MutationObserver(() => runEngine());
+                _mutationObs.observe(document.body, { childList: true, subtree: true });
+                document.addEventListener('change', handleInteraction, true);
+                runEngine();
+                console.log('[Autofill] V26 Engine active');
             },
-            deactivate() { _active = false; },
+            toggleRecording(state) {
+                _recording = state;
+                console.log(`[Autofill] Recording: ${_recording}`);
+            }
         };
     })();
 
     // ═══════════════════════════════════════════════════════════════════════
-    // BOOT — decide which modules to activate on this page
+    // BOOT
     // ═══════════════════════════════════════════════════════════════════════
 
     async function boot() {
-        const { solverEnabled, autofillEnabled, captchaEnabled } = await getStorage([
-            'solverEnabled', 'autofillEnabled', 'captchaEnabled'
-        ]);
+        const data = await getStorage(['solverEnabled', 'autofillEnabled', 'captchaEnabled']);
 
-        // Exam module — Sarathi STALL iframe only
-        if (solverEnabled !== false) {
-            ExamModule.activate();
-        }
+        if (data.solverEnabled !== false) ExamModule.activate();
+        if (data.captchaEnabled !== false) CaptchaModule.activate();
+        if (data.autofillEnabled !== false) AutofillModule.activate();
 
-        // Captcha module — any page with text captcha image
-        if (captchaEnabled !== false) {
-            CaptchaModule.activate();
-        }
-
-        // Autofill module — any page with a form
-        if (autofillEnabled !== false) {
-            AutofillModule.activate();
-        }
+        // Listen for control messages
+        chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+            if (msg.type === 'TOGGLE_RECORD') AutofillModule.toggleRecording(msg.state);
+            if (msg.type === 'FORCE_AUTOFILL') AutofillModule.activate();
+        });
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', boot);
-    } else {
-        boot();
-    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+    else boot();
 
 })();

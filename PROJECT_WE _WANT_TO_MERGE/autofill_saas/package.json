@@ -1,0 +1,17 @@
+{
+  "name": "autofill-saas",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @autofill/schemas && npm run build --workspace @autofill/auth-sdk && npm run build --workspace @autofill/telemetry && npm run build --workspace @autofill/workflow-sdk && npm run build --workspace @autofill/api && npm run build --workspace @autofill/extension-chrome && npm run build --workspace @autofill/extension-firefox && npm run build --workspace @autofill/web-dashboard && npm run build --workspace @autofill/admin-dashboard",
+    "dev:api": "npm run dev --workspace @autofill/api",
+    "dev:web": "npm run dev --workspace @autofill/web-dashboard",
+    "dev:admin": "npm run dev --workspace @autofill/admin-dashboard",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

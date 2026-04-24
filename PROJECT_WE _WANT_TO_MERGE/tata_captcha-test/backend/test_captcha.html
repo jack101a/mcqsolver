@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Captcha Detection Test Page</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 2rem;
+    }
+    h1 { color: #38bdf8; margin-bottom: .5rem; }
+    p.subtitle { color: #94a3b8; margin-bottom: 2rem; font-size: .95rem; }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      max-width: 600px;
+    }
+    .card h2 { color: #7dd3fc; font-size: 1.1rem; margin-bottom: .75rem; }
+    .card img { border: 2px solid #475569; border-radius: 6px; margin-bottom: .75rem; display: block; }
+    .card label { display: block; color: #cbd5e1; margin-bottom: .35rem; font-size: .85rem; }
+    .card input[type="text"] {
+      width: 100%;
+      padding: .5rem .75rem;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      background: #0f172a;
+      color: #f1f5f9;
+      font-size: 1rem;
+    }
+    code { background: #334155; padding: .1rem .35rem; border-radius: 4px; font-size: .85rem; color: #fbbf24; }
+  </style>
+</head>
+<body>
+
+  <h1>🧪 Captcha Detection Test Page</h1>
+  <p class="subtitle">
+    Open DevTools → Console and look for <code>[CaptchaSolver]</code> logs.
+    The extension content script should detect each captcha image below.
+  </p>
+
+  <!-- ─── Test 1: #capimg + captchaimage.jsp src  ─── -->
+  <div class="card">
+    <h2>Test 1 — <code>#capimg</code> + <code>captchaimage.jsp</code> src</h2>
+    <form>
+      <img id="capimg" src="sarathi_dataset_final/0D8FFZ.png" alt="captcha image"
+           width="250" height="60">
+      <label for="captcha">Enter Captcha:</label>
+      <input type="text" id="captcha" name="captcha" placeholder="auto-filled by extension">
+    </form>
+  </div>
+
+  <!-- ─── Test 2: #captchaImg + .jsp src  ─── -->
+  <div class="card">
+    <h2>Test 2 — <code>#captchaImg</code> + <code>.jsp</code> src</h2>
+    <form>
+      <img id="captchaImg" src="sarathi_dataset_final/0OCveQ.png" alt="captcha"
+           width="250" height="60">
+      <label for="captchatext">Captcha Text:</label>
+      <input type="text" id="captchatext" name="captchatext" placeholder="auto-filled by extension">
+    </form>
+  </div>
+
+  <!-- ─── Test 3: src contains "captcha" keyword  ─── -->
+  <div class="card">
+    <h2>Test 3 — <code>src*="captcha"</code> pattern (no id)</h2>
+    <form>
+      <img src="sarathi_dataset_final/0S155U.png" alt="captcha verification"
+           width="250" height="60"
+           data-note="src does not contain captcha keyword — extension should still match via other selectors">
+      <!-- This image won't match src*="captcha". Let's use one that does: -->
+      <label for="entcaptxt">Enter Captcha:</label>
+      <input type="text" id="entcaptxt" name="entcaptxt" placeholder="auto-filled by extension">
+    </form>
+  </div>
+
+  <!-- ─── Test 4: input with name*="capt"  ─── -->
+  <div class="card">
+    <h2>Test 4 — <code>input[name*="capt"]</code> match</h2>
+    <form>
+      <img id="captcha_img_4" src="sarathi_dataset_final/0c6Nsc.png" alt="captcha"
+           width="250" height="60">
+      <label for="entCaptha">Captcha:</label>
+      <input type="text" id="entCaptha" name="entCaptha" placeholder="auto-filled by extension">
+    </form>
+  </div>
+
+  <p class="subtitle" style="margin-top: 2rem;">
+    ✅ If the backend is running on <code>localhost:8080</code>, the input fields above
+    will be auto-filled with the solved captcha text.
+  </p>
+
+</body>
+</html>

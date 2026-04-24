@@ -1,0 +1,10 @@
+{
+  "name": "@autofill/admin-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"Bundle admin dashboard app\"",
+    "dev": "node ../../scripts/serve-static.mjs ./src 4100"
+  }
+}
