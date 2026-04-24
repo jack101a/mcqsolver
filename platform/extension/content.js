@@ -76,55 +76,130 @@
 
     const CaptchaModule = (() => {
         let _active = false;
-        let _lastSolved = '';
+        const _solvedMap = new Map(); // src → b64 prefix, per-captcha dedup
 
-        function findCaptchaPair() {
-            const imgs = [...document.querySelectorAll('img')].filter(img => {
-                const src  = img.src || '';
-                const w    = img.naturalWidth  || img.width;
-                const h    = img.naturalHeight || img.height;
-                return (w > 40 && w < 400 && h > 20 && h < 100) &&
-                       (src.includes('captcha') || src.includes('verify') ||
-                        src.includes('code') || img.id?.toLowerCase().includes('captcha') ||
-                        img.className?.toLowerCase().includes('captcha'));
-            });
-            for (const img of imgs) {
-                const parent = img.closest('form, div, td, tr') || document.body;
-                const inp = parent.querySelector(
-                    'input[type="text"], input[type="tel"], input:not([type])'
-                );
-                if (inp) return { img, inp };
+        function normHost(h) {
+            return String(h || '').replace(/^www\./, '').toLowerCase();
+        }
+
+        function fillInput(inp, value) {
+            // Native setter — works with React/Angular/Vue controlled inputs
+            try {
+                const proto = inp instanceof HTMLTextAreaElement
+                    ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (nativeSetter) nativeSetter.call(inp, value);
+                else inp.value = value;
+            } catch (_) { inp.value = value; }
+            ['input', 'change', 'blur', 'keyup'].forEach(t =>
+                inp.dispatchEvent(new Event(t, { bubbles: true }))
+            );
+        }
+
+        // Priority 1: server-synced domain field routes
+        function findPairFromRoutes(routes) {
+            const imageRoutes = (routes || []).filter(r =>
+                (r.task_type || r.source_data_type) === 'image'
+            );
+            for (const route of imageRoutes) {
+                try {
+                    const img = document.querySelector(route.source_selector);
+                    const inp = document.querySelector(route.target_selector);
+                    if (img && inp) return { img, inp, fieldName: route.field_name };
+                } catch (_) {}
             }
             return null;
         }
 
-        async function solve(img, inp) {
-            const b64 = imgToB64(img);
-            if (!b64) return;
-            const key = b64.slice(0, 60);
-            if (key === _lastSolved) return;
-            _lastSolved = key;
-
-            const domain = window.location.hostname;
-            const resp = await sendMsg('SOLVE_CAPTCHA', { imageB64: b64, domain });
-            if (!resp?.ok) return;
-
-            await humanMouse(inp);
-            inp.focus();
-            inp.value = resp.result;
-            inp.dispatchEvent(new Event('input',  { bubbles: true }));
-            inp.dispatchEvent(new Event('change', { bubbles: true }));
-            console.log(`[Captcha] Solved: "${resp.result}" in ${resp.ms}ms`);
+        // Priority 2: server-synced globalLocators
+        function findPairFromLocators(locators) {
+            const host = normHost(window.location.hostname);
+            const loc = locators?.[host] || locators?.['www.' + host];
+            if (loc?.img && loc?.input) {
+                try {
+                    const img = document.querySelector(loc.img);
+                    const inp = document.querySelector(loc.input);
+                    if (img && inp) return { img, inp };
+                } catch (_) {}
+            }
+            return null;
         }
 
-        function tick() {
+        // Priority 3: heuristic fallback (common captcha selectors)
+        function findPairHeuristic() {
+            const SELECTORS = [
+                '#capimg', '#capimg1', '#captchaImg', '#captcha-img',
+                'img[src*="captcha"]', 'img[src*="captchaimage"]',
+                'img[src*=".jsp"]', 'img[id*="captcha"]', 'img[class*="captcha"]',
+            ];
+            for (const sel of SELECTORS) {
+                try {
+                    const img = document.querySelector(sel);
+                    if (!img) continue;
+                    const w = img.naturalWidth || img.width;
+                    const h = img.naturalHeight || img.height;
+                    if (w < 20 || h < 10) continue;
+                    const parent = img.closest('form, div, td, tr') || document.body;
+                    const inp = parent.querySelector(
+                        'input[id*="captcha"], input[name*="captcha"], ' +
+                        'input[id*="capt"], input[name*="capt"], ' +
+                        'input[type="text"], input:not([type])'
+                    );
+                    if (inp) return { img, inp };
+                } catch (_) {}
+            }
+            return null;
+        }
+
+        async function solve(img, inp, fieldName) {
+            const b64 = imgToB64(img);
+            if (!b64) return;
+            const cacheKey = img.src || b64.slice(0, 80);
+            const b64Key   = b64.slice(0, 80);
+            if (_solvedMap.get(cacheKey) === b64Key) return; // same image already solved
+
+            const domain = normHost(window.location.hostname);
+            const resp = await sendMsg('SOLVE_CAPTCHA', {
+                imageB64:   b64,
+                domain,
+                field_name: fieldName || 'image_default',
+            });
+            if (!resp?.ok || !resp.result) {
+                console.warn('[Captcha] Solve failed:', resp?.error);
+                return;
+            }
+
+            _solvedMap.set(cacheKey, b64Key);
+            await humanMouse(inp);
+            inp.focus();
+            fillInput(inp, resp.result);
+            console.log(`[Captcha] ✓ "${resp.result}" in ${resp.ms}ms (${domain})`);
+        }
+
+        async function tick() {
             if (!_active) return;
-            const pair = findCaptchaPair();
-            if (pair) solve(pair.img, pair.inp);
+            const data = await getStorage(['globalFieldRoutes', 'globalLocators', 'captchaEnabled']);
+            if (data.captchaEnabled === false) return;
+
+            const host   = normHost(window.location.hostname);
+            const routes = data.globalFieldRoutes?.[host]
+                        || data.globalFieldRoutes?.['www.' + host]
+                        || [];
+
+            const pair = findPairFromRoutes(routes)
+                      || findPairFromLocators(data.globalLocators)
+                      || findPairHeuristic();
+
+            if (pair) await solve(pair.img, pair.inp, pair.fieldName);
         }
 
         return {
-            activate() { _active = true; setInterval(tick, 2500); console.log('[Captcha] Module active'); },
+            activate() {
+                _active = true;
+                tick(); // immediate first try
+                setInterval(tick, 2500);
+                console.log('[Captcha] Module active (route-aware)');
+            },
             deactivate() { _active = false; },
         };
     })();
