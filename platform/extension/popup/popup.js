@@ -60,6 +60,35 @@ el('link-options').addEventListener('click', e => {
     window.close();
 });
 
+// Autofill Actions
+chrome.storage.local.get(['activeProfileId', 'profiles', 'isRecording'], data => {
+    const activeId = data.activeProfileId || 'default';
+    const profiles = data.profiles || [{ id: 'default', name: 'Default Profile' }];
+    const activeProfile = profiles.find(p => p.id === activeId) || profiles[0];
+    if (activeProfile) {
+        el('active-profile-name').textContent = activeProfile.name || activeId;
+    }
+    el('tog-record').checked = data.isRecording || false;
+});
+
+el('tog-record').addEventListener('change', e => {
+    const isRecording = e.target.checked;
+    chrome.storage.local.set({ isRecording });
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'TOGGLE_RECORD', state: isRecording });
+    });
+});
+
+el('btn-force-autofill').addEventListener('click', () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'FORCE_AUTOFILL' });
+    });
+    const btn = el('btn-force-autofill');
+    const oldText = btn.textContent;
+    btn.textContent = '⚡ Running...';
+    setTimeout(() => btn.textContent = oldText, 1000);
+});
+
 // Load usage stats (local session counters)
 chrome.storage.local.get(['statCaptcha', 'statExam', 'statFill'], d => {
     el('u-captcha').textContent = d.statCaptcha || 0;
