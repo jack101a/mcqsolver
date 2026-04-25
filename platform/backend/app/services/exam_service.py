@@ -28,10 +28,28 @@ logger = logging.getLogger(__name__)
 # Try importing pytesseract; gracefully degrade if Tesseract not installed
 try:
     import pytesseract
+    
+    # Common Windows installation paths for Tesseract
+    _TESS_PATHS = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Tesseract-OCR", "tesseract.exe"),
+    ]
+    
+    for path in _TESS_PATHS:
+        if os.path.exists(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            break
+            
     _TESSERACT_AVAILABLE = True
 except ImportError:
     _TESSERACT_AVAILABLE = False
     logger.warning("pytesseract not installed — OCR layer disabled")
+
+
+def _resolve_project_root() -> Path:
+    """Resolve project root (where .env and backend/ reside)."""
+    return Path(__file__).resolve().parents[3]
 
 
 def _phash(img: Image.Image, size: int = 32) -> str:
@@ -61,10 +79,6 @@ def _hamming(a: str, b: str) -> int:
     diff = na ^ nb
     return bin(diff).count("1")
 
-
-def _resolve_project_root() -> Path:
-    """Return the project root (3 levels up from this file)."""
-    return Path(__file__).resolve().parents[3]
 
 
 class ExamService:

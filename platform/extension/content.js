@@ -243,7 +243,7 @@
             TOTAL_QUESTIONS:   15,
             REQUIRED_CORRECT:  9,
             MAX_WRONG:         6,
-            ABORT_MIN_Q:       5,   // don't abort before Q5 — give solver a chance
+            ABORT_MIN_Q:       14,   // only abort if failing is certain at the very end
             CLICK_MIN:         12000,
             CLICK_MAX:         19000,
             DEADLINE:          29000,
@@ -317,13 +317,22 @@
 
         const getQNum  = () => document.querySelector('span.mytext1')?.innerText?.trim() || '?';
         const getTimer = () => document.getElementById('timer')?.innerText?.trim()       || '—';
-        const getScore = () => document.getElementById('score')?.innerText?.trim()       || '—';
+        const getScore = () => {
+            const el = document.getElementById('score');
+            if (el && el.innerText.trim()) return el.innerText.trim();
+            const alt = document.querySelector('h3.text-success');
+            return alt ? alt.innerText.trim() : '—';
+        };
         const getQImage  = () => document.querySelector('img[name="qframe"]')?.src       || null;
         const getOptImgs = () => [1,2,3,4].map(i => {
             const el = document.getElementById('choice' + i);
             return el ? (el.src || null) : null;
         }).filter(Boolean);
-        const parseScore = () => parseFloat(getScore()) || 0;
+        const parseScore = () => {
+            const txt = getScore();
+            const m = txt.match(/\d+/);
+            return m ? parseInt(m[0], 10) : 0;
+        };
 
         function updatePanel() {
             if (!panelEls) return;
@@ -477,7 +486,8 @@
 
         return {
             activate() {
-                if (!/stallexamaction/i.test(window.location.href)) return;
+                const target = 'sarathi.parivahan.gov.in/sarathiservice/examselectaction.do';
+                if (!window.location.href.includes(target)) return;
                 createPanel();
                 getStorage(['solverEnabled']).then(d => state.enabled = d.solverEnabled !== false);
                 seedFromPage();
