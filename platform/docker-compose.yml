@@ -15,11 +15,26 @@ services:
       - ./backend/models:/app/backend/models
       - ./backend/logs:/app/backend/logs
       - ./backend/datasets:/app/backend/datasets
+      - ./backend/config:/app/backend/config
+      - ./backend/app.db:/app/backend/app.db
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  admin-ui:
+    build:
+      context: ./backend/admin-ui
+      dockerfile: Dockerfile
+    container_name: unified-platform-ui
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    networks:
+      - default
 
 networks:
   default:
