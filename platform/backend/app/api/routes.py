@@ -337,10 +337,14 @@ async def autofill_sync(request: Request) -> AutofillRuleSyncResponse:
 @router.get("/auth/verify", response_model=VerifyResponse)
 async def verify(request: Request) -> VerifyResponse:
     key_record = request.state.api_key_record
+    container  = request.app.state.container
+    key_hash   = key_record.get("key_hash", "")
+    is_master  = container.db.is_master_key_hash(key_hash)
     return VerifyResponse(
         valid=True,
         key_name=str(key_record["name"]),
         expires_at=key_record["expires_at"],
+        is_master=is_master,
     )
 
 

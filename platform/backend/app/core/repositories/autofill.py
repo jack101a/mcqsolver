@@ -89,6 +89,38 @@ class AutofillRepository(BaseRepository):
                 )
                 conn.commit()
 
+    def delete_autofill_proposal(self, proposal_id: int) -> bool:
+        """Permanently delete a proposal. Returns True if a row was deleted."""
+        with self._lock:
+            with self.connect() as conn:
+                cur = conn.execute(
+                    "DELETE FROM autofill_rule_proposals WHERE id = ?", (proposal_id,)
+                )
+                conn.commit()
+                return cur.rowcount > 0
+
+    def update_autofill_proposal(self, proposal_id: int, rule_json: str | None = None, status: str | None = None) -> bool:
+        """Patch editable fields on a proposal. Returns True if a row was updated."""
+        parts, params = [], []
+        if rule_json is not None:
+            parts.append("rule_json = ?")
+            params.append(rule_json)
+        if status is not None:
+            allowed = {"pending", "approved", "rejected"}
+            if status not in allowed:
+                raise ValueError(f"Invalid status: {status!r}")
+            parts.append("status = ?")
+            params.append(status)
+        if not parts:
+            return False
+        params.append(proposal_id)
+        sql = f"UPDATE autofill_rule_proposals SET {', '.join(parts)} WHERE id = ?"
+        with self._lock:
+            with self.connect() as conn:
+                cur = conn.execute(sql, params)
+                conn.commit()
+                return cur.rowcount > 0
+
     def get_approved_autofill_rules(self) -> list[dict]:
         """Return all approved proposals for extension sync download."""
         with self.connect() as conn:

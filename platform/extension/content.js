@@ -37,6 +37,10 @@
         } catch (_) { return null; }
     }
 
+    function utf8ToB64(value) {
+        return btoa(unescape(encodeURIComponent(String(value || ''))));
+    }
+
     function sendMsg(type, payload) {
         return new Promise(resolve => {
             if (typeof chrome === 'undefined' || !chrome.runtime?.id) return resolve({});
@@ -125,19 +129,44 @@
             inp.dispatchEvent(new Event('blur',   { bubbles: true }));
         }
 
-        // Priority 1: server-synced domain field routes
-        function findPairFromRoutes(routes) {
+        // Priority 1: server/local domain field routes
+        function findImagePairFromRoutes(routes) {
             const imageRoutes = (routes || []).filter(r =>
-                (r.task_type || r.source_data_type) === 'image'
+                (r.task_type || r.taskType || r.source_data_type) === 'image'
             );
             for (const route of imageRoutes) {
                 try {
-                    const img = document.querySelector(route.source_selector);
-                    const inp = document.querySelector(route.target_selector);
-                    if (img && inp) return { img, inp, fieldName: route.field_name };
+                    const sourceSelector = route.source_selector || route.sourceSelector;
+                    const targetSelector = route.target_selector || route.targetSelector;
+                    const img = document.querySelector(sourceSelector);
+                    const inp = document.querySelector(targetSelector);
+                    if (img && inp) return { img, inp, fieldName: route.field_name || route.fieldName };
                 } catch (_) {}
             }
             return null;
+        }
+
+        function getTextRoutePairs(routes) {
+            const pairs = [];
+            const textRoutes = (routes || []).filter(r =>
+                (r.task_type || r.taskType || r.source_data_type) === 'text'
+            );
+            for (const route of textRoutes) {
+                try {
+                    const sourceSelector = route.source_selector || route.sourceSelector;
+                    const targetSelector = route.target_selector || route.targetSelector;
+                    const source = document.querySelector(sourceSelector);
+                    const target = document.querySelector(targetSelector);
+                    if (source && target) {
+                        pairs.push({
+                            source,
+                            target,
+                            fieldName: route.field_name || route.fieldName || 'text_default',
+                        });
+                    }
+                } catch (_) {}
+            }
+            return pairs;
         }
 
         // Priority 2: server-synced globalLocators
@@ -189,6 +218,7 @@
 
             const domain = normHost(window.location.hostname);
             const resp = await sendMsg('SOLVE_CAPTCHA', {
+                taskType:   'image',
                 imageB64:   b64,
                 domain,
                 field_name: fieldName || 'image_default',
@@ -204,21 +234,56 @@
             console.log(`[Captcha] ✓ "${resp.result}" in ${resp.ms}ms (${domain})`);
         }
 
+        async function solveTextRoute(source, target, fieldName) {
+            const raw = (source.value ?? source.textContent ?? '').trim();
+            if (!raw) return;
+            const cacheKey = `${fieldName}:${raw.slice(0, 120)}`;
+            if (_solvedMap.get(cacheKey) === raw) return;
+
+            const domain = normHost(window.location.hostname);
+            const resp = await sendMsg('SOLVE_CAPTCHA', {
+                taskType:   'text',
+                imageB64:   utf8ToB64(raw),
+                domain,
+                field_name: fieldName || 'text_default',
+            });
+            if (!resp?.ok || !resp.result) {
+                console.warn('[Captcha] Text route solve failed:', resp?.error);
+                return;
+            }
+
+            _solvedMap.set(cacheKey, raw);
+            await humanMouse(target);
+            await humanType(target, resp.result);
+            console.log(`[Captcha] ✓ text route "${resp.result}" in ${resp.ms}ms (${domain})`);
+        }
+
         async function tick() {
             if (!_active) return;
-            const data = await getStorage(['globalFieldRoutes', 'globalLocators', 'captchaEnabled']);
+            const data = await getStorage(['globalFieldRoutes', 'domainFieldRoutes', 'globalLocators', 'customLocators', 'captchaEnabled']);
             if (data.captchaEnabled === false) return;
 
             const host   = normHost(window.location.hostname);
-            const routes = data.globalFieldRoutes?.[host]
-                        || data.globalFieldRoutes?.['www.' + host]
-                        || [];
+            const globalRoutes = data.globalFieldRoutes?.[host]
+                              || data.globalFieldRoutes?.['www.' + host]
+                              || [];
+            const localRoutes = (data.domainFieldRoutes || []).filter(route => {
+                const routeDomain = normHost(route.domain);
+                return routeDomain === host || routeDomain === `www.${host}`;
+            });
+            const routes = [...globalRoutes, ...localRoutes];
+            const locators = { ...(data.globalLocators || {}), ...(data.customLocators || {}) };
 
-            const pair = findPairFromRoutes(routes)
-                      || findPairFromLocators(data.globalLocators)
+            const pair = findImagePairFromRoutes(routes)
+                      || findPairFromLocators(locators)
                       || findPairHeuristic();
 
             if (pair) await solve(pair.img, pair.inp, pair.fieldName);
+
+            const textPairs = getTextRoutePairs(routes);
+            for (const item of textPairs) {
+                await solveTextRoute(item.source, item.target, item.fieldName);
+            }
         }
 
         return {
@@ -563,8 +628,8 @@
                 if (settings.skipPassword && el.type === 'password') continue;
 
                 // Resolve Value (Profile Tokens)
-                let fillValue = step.value || '';
-                if (fillValue.startsWith('{{') && fillValue.endsWith('}}')) {
+                let fillValue = step.value ?? '';
+                if (typeof fillValue === 'string' && fillValue.startsWith('{{') && fillValue.endsWith('}}')) {
                     const key = fillValue.slice(2, -2);
                     fillValue = profileData[key] || '';
                 }
@@ -585,6 +650,7 @@
                         el.click();
                     }
                     _filledElements.add(el);
+                    sendMsg('INCREMENT_STAT', { key: 'statFill' });
                 } catch (e) {
                     console.error('[Autofill] Step failed:', e);
                 }
@@ -598,42 +664,73 @@
             const profiles = data.profiles || [];
             const activeId = data.activeProfileId || 'default';
             const profile = profiles.find(p => p.id === activeId) || profiles[0] || { data: {} };
+            const profileData = profile?.data || {};
             const rules = data.rules || [];
 
             const matchedRules = rules.filter(matchRule).sort((a,b) => (b.priority || 100) - (a.priority || 100));
             if (!matchedRules.length) return;
 
             for (const rule of matchedRules) {
-                await executeRule(rule, profile.data, settings);
+                await executeRule(rule, profileData, settings);
             }
         }
 
         // ── Recorder ──────────────────────────────────────────────────────
 
+        function cssPath(el) {
+            if (el.id) return `#${CSS.escape(el.id)}`;
+            if (el.name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(el.name)}"]`;
+            if (el.className && typeof el.className === 'string') {
+                const classes = el.className.trim().split(/\s+/).filter(Boolean).slice(0, 3).map(c => `.${CSS.escape(c)}`).join('');
+                if (classes) return `${el.tagName.toLowerCase()}${classes}`;
+            }
+            return el.tagName.toLowerCase();
+        }
+
         function generateSelector(el) {
-            if (el.id) return { strategy: 'id', id: el.id };
-            if (el.name) return { strategy: 'name', name: el.name };
-            return { strategy: 'css', css: el.tagName.toLowerCase() + (el.className ? '.' + el.className.split(' ').join('.') : '') };
+            if (el.id) return { strategy: 'id', id: el.id, css: `#${CSS.escape(el.id)}` };
+            if (el.name) return { strategy: 'name', name: el.name, css: cssPath(el) };
+            return { strategy: 'css', css: cssPath(el) };
         }
 
         function handleInteraction(e) {
             if (!_recording) return;
-            const el = e.target;
-            if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return;
+            const el = e.target.closest('input, select, textarea, button, a');
+            if (!el || el.type === 'password') return;
+            if (e.type === 'click' && el.tagName === 'INPUT' && ['text', 'email', 'number', 'tel'].includes(el.type)) return;
 
             let action = 'text';
-            if (el.type === 'checkbox') action = 'checkbox';
-            else if (el.type === 'radio') action = 'radio';
-            else if (el.tagName === 'SELECT') action = 'select';
+            let value = el.value;
+            if (el.type === 'checkbox') {
+                action = 'checkbox';
+                value = el.checked;
+            } else if (el.type === 'radio') {
+                if (!el.checked) return;
+                action = 'radio';
+                value = el.value;
+            } else if (el.tagName === 'SELECT') {
+                action = 'select';
+            } else if (['BUTTON', 'A'].includes(el.tagName) || ['submit', 'button'].includes(el.type)) {
+                action = 'click';
+                value = '';
+            }
 
             const rule = {
+                local_rule_id: `local_${Date.now()}`,
+                name: `${action} ${window.location.hostname}`,
                 site: { match_mode: 'domainPath', pattern: window.location.hostname + window.location.pathname },
                 steps: [{
                     order: 1,
                     action,
-                    value: (action === 'checkbox' || action === 'radio') ? el.checked : el.value,
+                    value,
                     selector: generateSelector(el)
-                }]
+                }],
+                meta: {
+                    recorded_at: new Date().toISOString(),
+                    tag: el.tagName.toLowerCase(),
+                    element_id: el.id || '',
+                    element_name: el.name || '',
+                }
             };
 
             console.log('[Autofill] Recorded interaction:', rule);
@@ -641,9 +738,38 @@
             sendMsg('RECORD_STEP', { rule });
         }
 
+        function showRecordToast(text, isOn) {
+            const id = '__unified_record_toast';
+            let toast = document.getElementById(id);
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = id;
+                toast.style.position = 'fixed';
+                toast.style.right = '16px';
+                toast.style.bottom = '16px';
+                toast.style.zIndex = '2147483647';
+                toast.style.padding = '8px 12px';
+                toast.style.borderRadius = '8px';
+                toast.style.font = '600 12px/1.2 system-ui, sans-serif';
+                toast.style.boxShadow = '0 8px 20px rgba(0,0,0,0.25)';
+                document.documentElement.appendChild(toast);
+            }
+            toast.textContent = text;
+            toast.style.background = isOn ? '#15803d' : '#334155';
+            toast.style.color = '#ffffff';
+            toast.style.opacity = '1';
+            clearTimeout(toast._hideTimer);
+            toast._hideTimer = setTimeout(() => {
+                if (toast) toast.style.opacity = '0';
+            }, 2200);
+        }
+
         return {
             activate() {
                 _active = true;
+                getStorage(['isRecording']).then(d => {
+                    _recording = !!d.isRecording;
+                });
                 // Debounce: avoid flooding runEngine() on rapid DOM mutations (SPA routing)
                 let _mutationTimer = null;
                 _mutationObs = new MutationObserver(() => {
@@ -655,12 +781,17 @@
                 });
                 _mutationObs.observe(document.body, { childList: true, subtree: true });
                 document.addEventListener('change', handleInteraction, true);
+                document.addEventListener('click', handleInteraction, true);
                 runEngine();
                 console.log('[Autofill] V26 Engine active');
             },
             toggleRecording(state) {
                 _recording = state;
                 console.log(`[Autofill] Recording: ${_recording}`);
+                showRecordToast(_recording ? 'Autofill recording ON' : 'Autofill recording OFF', _recording);
+            },
+            runNow() {
+                runEngine();
             }
         };
     })();
@@ -679,7 +810,7 @@
         // Listen for control messages
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (msg.type === 'TOGGLE_RECORD') AutofillModule.toggleRecording(msg.state);
-            if (msg.type === 'FORCE_AUTOFILL') AutofillModule.activate();
+            if (msg.type === 'FORCE_AUTOFILL') AutofillModule.runNow();
             // Background pushes this when routes are updated — no page reload needed
             if (msg.type === 'ROUTES_UPDATED') {
                 console.log('[Content] Routes updated by background sync — applying immediately');

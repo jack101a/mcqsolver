@@ -1,7 +1,7 @@
 import React from "react";
 import { 
   LayoutDashboard, Database, Activity, BrainCircuit, Settings, 
-  Sun, Moon, LogOut 
+  Sun, Moon, LogOut, MapPin
 } from "lucide-react";
 
 export function Sidebar({
@@ -32,6 +32,7 @@ export function Sidebar({
             <button type="button" onClick={() => setActivePage("dashboard")} className={navClass("dashboard")}><LayoutDashboard size={16}/> Dashboard</button>
             <button type="button" onClick={() => setActivePage("models")} className={navClass("models")}><Database size={16}/> Models</button>
             <button type="button" onClick={() => setActivePage("autofill")} className={navClass("autofill")}><Activity size={16}/> Autofill Rules</button>
+            <button type="button" onClick={() => setActivePage("captcha")} className={navClass("captcha")}><MapPin size={16}/> Captcha Routes</button>
             <button type="button" onClick={() => setActivePage("exam")} className={navClass("exam")}><BrainCircuit size={16}/> MCQ/Exam</button>
             <button type="button" onClick={() => setActivePage("settings")} className={navClass("settings")}><Settings size={16}/> Settings</button>
           </div>
@@ -45,6 +46,7 @@ export function Sidebar({
               <option value="dashboard">Dashboard</option>
               <option value="models">Models</option>
               <option value="autofill">Autofill Rules</option>
+              <option value="captcha">Captcha Routes</option>
               <option value="exam">MCQ/Exam</option>
               <option value="settings">Settings</option>
             </select>

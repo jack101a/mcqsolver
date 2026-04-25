@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from fastapi import APIRouter
-from app.api.admin_routes import auth, keys, models, datasets, backups, autofill, locators, settings, analytics
+from app.api.admin_routes import auth, keys, models, datasets, backups, autofill, locators, settings, analytics, captcha_proposals
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -16,3 +16,4 @@ router.include_router(autofill.router)
 router.include_router(locators.router)
 router.include_router(settings.router)
 router.include_router(analytics.router)
+router.include_router(captcha_proposals.router)

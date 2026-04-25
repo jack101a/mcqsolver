@@ -1,112 +1,170 @@
 'use strict';
 
-const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'apiKey', 'serverUrl', 'theme'];
+const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt'];
 
 function el(id) { return document.getElementById(id); }
 
-function setStatus(text, state = 'idle') {
-    el('status-text').textContent = text;
-    const dot = el('conn-dot');
-    dot.className = `dot ${state}`;
+// --- View Management ---
+function showView(viewId) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const target = el(viewId);
+    if (target) target.classList.add('active');
+    
+    // Update header subtitle
+    const sub = el('sub-header');
+    if (viewId === 'view-auth') sub.textContent = 'Setup Required';
+    else if (viewId === 'view-user') sub.textContent = 'User Mode';
+    else if (viewId === 'view-master') sub.textContent = 'Master Control';
 }
 
-// Load saved settings and apply to toggles
-chrome.storage.local.get(KEYS, data => {
-    el('tog-captcha').checked = data.captchaEnabled !== false;
-    el('tog-exam').checked    = data.solverEnabled  !== false;
-    el('tog-autofill').checked= data.autofillEnabled!== false;
+// --- Status & UI Helpers ---
+function updateStatusDot(dotId, state) {
+    const dot = el(dotId);
+    if (dot) dot.className = `status-dot ${state}`;
+}
 
-    if (data.apiKey) {
-        verifyKey();
-    } else {
-        setStatus('No API key — open Settings', 'err');
+function calculateExpiry(expiryStr) {
+    if (!expiryStr) return 'No Expiry';
+    try {
+        const exp = new Date(expiryStr);
+        const now = new Date();
+        const diff = exp.getTime() - now.getTime();
+        const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+        if (days <= 0) return 'Expired';
+        return `${days} days remaining`;
+    } catch (_) {
+        return 'Unknown Expiry';
     }
+}
 
-    applyTheme(data.theme || 'dark');
-});
-
-// Toggle listeners
-el('tog-captcha').addEventListener('change', e => {
-    chrome.storage.local.set({ captchaEnabled: e.target.checked });
-});
-el('tog-exam').addEventListener('change', e => {
-    chrome.storage.local.set({ solverEnabled: e.target.checked });
-});
-el('tog-autofill').addEventListener('change', e => {
-    chrome.storage.local.set({ autofillEnabled: e.target.checked });
-});
-
-// Verify API key
-function verifyKey() {
-    setStatus('Connecting…', 'idle');
-    chrome.runtime.sendMessage({ type: 'VERIFY_KEY' }, resp => {
+// --- Auth Logic ---
+async function handleLogin() {
+    const key = el('input-key').value.trim();
+    const url = el('input-url').value.trim();
+    const errNode = el('auth-error');
+    
+    if (!key) {
+        errNode.textContent = 'Please enter an API key.';
+        return;
+    }
+    
+    errNode.textContent = 'Verifying...';
+    errNode.style.color = 'var(--warning)';
+    
+    chrome.runtime.sendMessage({ type: 'VERIFY_KEY', apiKey: key, serverUrl: url }, async (resp) => {
         if (resp?.ok) {
-            setStatus(`Connected — ${resp.data.key_name}`, 'ok');
-            el('plan-badge').textContent = 'Active';
+            await chrome.storage.local.set({ 
+                apiKey: key, 
+                serverUrl: url,
+                isMaster: !!resp.data.is_master,
+                keyName: resp.data.key_name || 'Generic Key',
+                expiresAt: resp.data.expires_at || null
+            });
+            initApp();
         } else {
-            setStatus(resp?.error || 'Connection failed', 'err');
+            errNode.textContent = resp?.error || 'Verification failed. Check key/URL.';
+            errNode.style.color = 'var(--danger)';
         }
     });
 }
 
-el('btn-verify').addEventListener('click', verifyKey);
-
-el('btn-options').addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-    window.close();
-});
-
-el('link-options').addEventListener('click', e => {
-    e.preventDefault();
-    chrome.runtime.openOptionsPage();
-    window.close();
-});
-
-// Autofill Actions
-chrome.storage.local.get(['activeProfileId', 'profiles', 'isRecording'], data => {
-    const activeId = data.activeProfileId || 'default';
-    const profiles = data.profiles || [{ id: 'default', name: 'Default Profile' }];
-    const activeProfile = profiles.find(p => p.id === activeId) || profiles[0];
-    if (activeProfile) {
-        el('active-profile-name').textContent = activeProfile.name || activeId;
-    }
-    el('tog-record').checked = data.isRecording || false;
-});
-
-el('tog-record').addEventListener('change', e => {
-    const isRecording = e.target.checked;
-    chrome.storage.local.set({ isRecording });
-    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-        if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'TOGGLE_RECORD', state: isRecording });
-    });
-});
-
-el('btn-force-autofill').addEventListener('click', () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-        if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: 'FORCE_AUTOFILL' });
-    });
-    const btn = el('btn-force-autofill');
-    const oldText = btn.textContent;
-    btn.textContent = '⚡ Running...';
-    setTimeout(() => btn.textContent = oldText, 1000);
-});
-
-// Load usage stats (local session counters)
-chrome.storage.local.get(['statCaptcha', 'statExam', 'statFill'], d => {
-    el('u-captcha').textContent = d.statCaptcha || 0;
-    el('u-exam').textContent    = d.statExam    || 0;
-    el('u-fill').textContent    = d.statFill    || 0;
-});
-// Theme logic
-function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-    el('themeToggleBtn').textContent = theme === 'light' ? '🌙' : '☀️';
+async function handleLogout() {
+    await chrome.storage.local.remove(['apiKey', 'isMaster', 'keyName', 'expiresAt']);
+    showView('view-auth');
 }
 
-el('themeToggleBtn').addEventListener('click', () => {
-    chrome.storage.local.get('theme', data => {
-        const newTheme = (data.theme === 'light') ? 'dark' : 'light';
-        applyTheme(newTheme);
-        chrome.storage.local.set({ theme: newTheme });
+// --- Main Init ---
+async function initApp() {
+    const data = await chrome.storage.local.get(KEYS);
+    
+    if (!data.apiKey) {
+        showView('view-auth');
+        return;
+    }
+
+    if (data.isMaster) {
+        showView('view-master');
+        el('master-tag').style.display = 'block';
+        setupMasterUI(data);
+    } else {
+        showView('view-user');
+        el('master-tag').style.display = 'none';
+        setupUserUI(data);
+    }
+}
+
+function setupUserUI(data) {
+    el('user-tog-autofill').checked = data.autofillEnabled !== false;
+    el('user-tog-captcha').checked = data.captchaEnabled !== false;
+    el('user-tog-exam').checked = data.solverEnabled !== false;
+    el('user-expiry').textContent = calculateExpiry(data.expiresAt);
+    el('user-key-name').textContent = data.keyName || 'Active User';
+    
+    // Connectivity check placeholder
+    updateStatusDot('user-dot', 'ok');
+}
+
+function setupMasterUI(data) {
+    el('tog-autofill').checked = data.autofillEnabled !== false;
+    el('tog-captcha').checked = data.captchaEnabled !== false;
+    el('tog-exam').checked = data.solverEnabled !== false;
+    
+    updateStatusDot('master-dot', 'ok');
+    
+    // Load stats
+    chrome.storage.local.get(['statCaptcha', 'statExam', 'statFill'], s => {
+        el('u-captcha').textContent = s.statCaptcha || 0;
+        el('u-exam').textContent = s.statExam || 0;
+        el('u-fill').textContent = s.statFill || 0;
     });
+}
+
+// --- Event Listeners ---
+document.addEventListener('DOMContentLoaded', () => {
+    initApp();
+
+    // Auth
+    el('btn-auth-submit').addEventListener('click', handleLogin);
+    el('btn-logout').addEventListener('click', handleLogout);
+    el('btn-master-logout').addEventListener('click', handleLogout);
+
+    // Toggles - User
+    el('user-tog-autofill').addEventListener('change', e => chrome.storage.local.set({ autofillEnabled: e.target.checked }));
+    el('user-tog-captcha').addEventListener('change', e => chrome.storage.local.set({ captchaEnabled: e.target.checked }));
+    el('user-tog-exam').addEventListener('change', e => chrome.storage.local.set({ solverEnabled: e.target.checked }));
+
+    // Toggles - Master
+    el('tog-autofill').addEventListener('change', e => chrome.storage.local.set({ autofillEnabled: e.target.checked }));
+    el('tog-captcha').addEventListener('change', e => chrome.storage.local.set({ captchaEnabled: e.target.checked }));
+    el('tog-exam').addEventListener('change', e => chrome.storage.local.set({ solverEnabled: e.target.checked }));
+
+    // Master Actions
+    el('btn-record').addEventListener('click', async () => {
+        const s = await chrome.storage.local.get('isRecording');
+        const newState = !s.isRecording;
+        await chrome.storage.local.set({ isRecording: newState });
+        el('btn-record').textContent = newState ? 'Stop Recording' : 'Start Rule Recording';
+        el('btn-record').style.borderColor = newState ? 'var(--danger)' : 'var(--panel-border)';
+    });
+
+    el('btn-sync-routes').addEventListener('click', () => {
+        el('btn-sync-routes').textContent = 'Syncing...';
+        chrome.runtime.sendMessage({ type: 'SYNC_NOW' }, () => {
+            el('btn-sync-routes').textContent = 'Sync Complete';
+            setTimeout(() => el('btn-sync-routes').textContent = 'Sync Rules with Cloud', 2000);
+        });
+    });
+
+    el('btn-dashboard').addEventListener('click', () => {
+        chrome.runtime.openOptionsPage();
+    });
+});
+
+// Sync recording button state on startup
+chrome.storage.local.get('isRecording', s => {
+    const btn = el('btn-record');
+    if (btn) {
+        btn.textContent = s.isRecording ? 'Stop Recording' : 'Start Rule Recording';
+        btn.style.borderColor = s.isRecording ? 'var(--danger)' : 'var(--panel-border)';
+    }
 });

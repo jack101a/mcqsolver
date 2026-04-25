@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json as _json
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from .utils import _admin_guard
@@ -77,3 +78,55 @@ async def bulk_reject_autofill_proposals(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "count": len(proposal_ids)})
     except Exception as e:
         raise HTTPException(400, str(e))
+
+
+@router.patch("/api/autofill/proposals/{proposal_id}")
+async def edit_autofill_proposal(request: Request, proposal_id: int) -> JSONResponse:
+    """Edit an autofill proposal's rule_json and/or status.
+
+    Body (JSON): { "rule_json": "...", "status": "pending|approved|rejected" }
+    Both fields are optional; at least one must be provided.
+    """
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, detail="Invalid JSON body")
+
+    rule_json = body.get("rule_json")        # raw string or None
+    status    = body.get("status")
+
+    # If caller passed a dict/object for rule_json, serialize it
+    if rule_json is not None and not isinstance(rule_json, str):
+        rule_json = _json.dumps(rule_json)
+
+    if rule_json is None and status is None:
+        raise HTTPException(400, detail="Provide at least one of: rule_json, status")
+
+    try:
+        updated = container.db.update_autofill_proposal(
+            proposal_id, rule_json=rule_json, status=status
+        )
+        if not updated:
+            raise HTTPException(404, detail="Proposal not found")
+        return JSONResponse({"ok": True})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, detail=str(e))
+
+
+@router.delete("/api/autofill/proposals/{proposal_id}")
+async def delete_autofill_proposal(request: Request, proposal_id: int) -> JSONResponse:
+    """Permanently delete an autofill proposal."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    deleted = container.db.delete_autofill_proposal(proposal_id)
+    if not deleted:
+        raise HTTPException(404, detail="Proposal not found")
+    return JSONResponse({"ok": True})

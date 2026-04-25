@@ -4,6 +4,7 @@ import { Key, Plus, ShieldCheck, XCircle } from "lucide-react";
 export function KeysPanel({
   apiKeys,
   access,
+  masterKeyInfo,
   createKeyAllDomains,
   setCreateKeyAllDomains,
   createKeyDomainSelections,
@@ -36,6 +37,39 @@ export function KeysPanel({
         </div>
         
         <div className="p-5 flex-1 flex flex-col">
+          {/* Master Key Section */}
+          {masterKeyInfo && (
+            <div className={`mb-6 p-4 rounded-xl border-2 border-dashed transition-all ${isDark ? 'bg-indigo-500/5 border-indigo-500/20' : 'bg-indigo-50 border-indigo-200'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-indigo-500 text-white rounded-md shadow-lg shadow-indigo-500/20">
+                    <ShieldCheck size={14}/>
+                  </div>
+                  <span className={`text-xs font-bold uppercase tracking-wider ${t_textHeading}`}>Master Administrative Key</span>
+                </div>
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">PERSISTENT</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className={`flex-1 font-mono text-sm p-2 rounded-lg border overflow-hidden truncate ${isDark ? 'bg-black/40 border-white/10 text-indigo-300' : 'bg-white border-indigo-100 text-indigo-700'}`}>
+                  {masterKeyInfo.key}
+                </div>
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(masterKeyInfo.key);
+                    // Toast is handled via prop if we had it, but let's assume we just want to copy for now
+                  }}
+                  className={`p-2 rounded-lg border transition-all ${glassButton}`}
+                  title="Copy Master Key"
+                >
+                  <Plus size={16} className="rotate-45" /> {/* Use Plus as a placeholder for copy if needed, or just let it be */}
+                </button>
+              </div>
+              <p className={`text-[10px] mt-2 italic leading-tight ${t_textMuted}`}>
+                This key never expires and survives all system updates. Use it to unlock full "Master Mode" in the extension.
+              </p>
+            </div>
+          )}
+
           <div className="overflow-auto max-h-72 mb-6 flex-1 pr-2 custom-scrollbar">
             <table className="w-full text-sm text-left whitespace-nowrap">
               <thead>

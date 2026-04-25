@@ -47,5 +47,10 @@
     "128": "icons/icon128.png"
   },
 
-  "web_accessible_resources": []
+  "web_accessible_resources": [
+    {
+      "resources": ["locator_picker.js"],
+      "matches": ["https://*/*", "http://*/*"]
+    }
+  ]
 }

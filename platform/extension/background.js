@@ -2,25 +2,75 @@
 // Lightweight API relay + auto-sync engine.
 // Routes/locators are synced from backend every 5 min automatically — no manual refresh needed.
 
-'use strict';
-
-const API_BASE       = 'http://localhost:8080';
-const SYNC_ALARM     = 'auto_sync';
-const SYNC_PERIOD_MIN = 5; // minutes between background syncs
 
 // ─────────────────────────────────────────────────────────────────
 // Settings helpers
 // ─────────────────────────────────────────────────────────────────
 
+'use strict';
+
+const API_BASE = 'http://localhost:8080';
+const SYNC_ALARM = 'auto_sync';
+const SYNC_PERIOD_MIN = 5;
+let cachedDeviceId = '';
+let pendingDeviceIdPromise = null;
+
 function getSettings() {
     return new Promise(resolve => {
-        chrome.storage.local.get(['apiKey', 'serverUrl'], d => {
+        chrome.storage.local.get(['apiKey', 'serverUrl', 'deviceId'], d => {
             resolve({
                 apiKey:    d.apiKey    || '',
                 serverUrl: d.serverUrl || API_BASE,
+                deviceId:  d.deviceId  || '',
             });
         });
     });
+}
+
+function storageGet(keys) {
+    return new Promise(resolve => chrome.storage.local.get(keys, resolve));
+}
+
+function storageSet(obj) {
+    return new Promise(resolve => chrome.storage.local.set(obj, resolve));
+}
+
+function normalizeDomain(value) {
+    let token = String(value || '').trim().toLowerCase();
+    if (!token) return '';
+    try {
+        if (token.includes('://')) token = new URL(token).hostname;
+    } catch (_) {}
+    token = token.split('/', 1)[0].split(':', 1)[0].replace(/\.$/, '');
+    if (token.startsWith('www.')) token = token.slice(4);
+    return token;
+}
+
+async function getDeviceId() {
+    if (cachedDeviceId) return cachedDeviceId;
+    if (pendingDeviceIdPromise) return pendingDeviceIdPromise;
+
+    pendingDeviceIdPromise = (async () => {
+        const data = await storageGet(['deviceId']);
+        const stored = String(data.deviceId || '').trim();
+        if (stored) {
+            cachedDeviceId = stored;
+            return cachedDeviceId;
+        }
+
+        const generated = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `dev_${chrome.runtime.id}_${Date.now()}`;
+        await storageSet({ deviceId: generated });
+        cachedDeviceId = generated;
+        return cachedDeviceId;
+    })();
+
+    try {
+        return await pendingDeviceIdPromise;
+    } finally {
+        pendingDeviceIdPromise = null;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -31,9 +81,12 @@ async function apiGet(path) {
     const { apiKey, serverUrl } = await getSettings();
     if (!apiKey) throw new Error('No API key configured');
     const resp = await fetch(`${serverUrl}${path}`, {
-        headers: { 'X-API-Key': apiKey },
+        headers: { 'X-API-Key': apiKey, 'X-Device-ID': await getDeviceId() },
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
     return resp.json();
 }
 
@@ -45,6 +98,7 @@ async function apiPost(path, body) {
         headers: {
             'Content-Type': 'application/json',
             'X-API-Key':    apiKey,
+            'X-Device-ID':  await getDeviceId(),
         },
         body: JSON.stringify(body),
     });
@@ -53,6 +107,123 @@ async function apiPost(path, body) {
         throw new Error(err.detail || `HTTP ${resp.status}`);
     }
     return resp.json();
+}
+
+async function incrementStat(key) {
+    const data = await storageGet([key]);
+    const val = (data[key] || 0) + 1;
+    await storageSet({ [key]: val });
+}
+
+async function startLocate(targetField) {
+    let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab || !tab.url || !/^https?:/i.test(tab.url)) {
+        const candidates = await chrome.tabs.query({ lastFocusedWindow: true });
+        tab = candidates.find(t => t.url && /^https?:/i.test(t.url));
+    }
+    if (!tab) throw new Error('Open the target website tab first.');
+
+    await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['locator_picker.js'],
+    });
+    await chrome.tabs.sendMessage(tab.id, { type: 'PICK_ELEMENT', targetField });
+    return { started: true };
+}
+
+function notifyRuntime(message) {
+    try {
+        chrome.runtime.sendMessage(message, () => {
+            void chrome.runtime.lastError;
+        });
+    } catch (_) {}
+}
+
+async function validateSelectors(sourceSelector, targetSelector) {
+    let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab || !tab.url || !/^https?:/i.test(tab.url)) {
+        const candidates = await chrome.tabs.query({ lastFocusedWindow: true });
+        tab = candidates.find(t => t.url && /^https?:/i.test(t.url));
+    }
+    if (!tab) throw new Error('Open the target website tab first.');
+
+    const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (src, tgt) => {
+            try {
+                return {
+                    ok: true,
+                    srcCount: src ? document.querySelectorAll(src).length : 0,
+                    tgtCount: tgt ? document.querySelectorAll(tgt).length : 0,
+                    href: location.href,
+                };
+            } catch (e) {
+                return { ok: false, error: String(e) };
+            }
+        },
+        args: [sourceSelector, targetSelector],
+    });
+    return result || { ok: false, error: 'No validation result' };
+}
+
+async function syncPendingRoutesToServer() {
+    const data = await storageGet(['domainFieldRoutes', 'globalFieldRoutes']);
+    const routes = Array.isArray(data.domainFieldRoutes) ? data.domainFieldRoutes : [];
+    const globalRoutes = data.globalFieldRoutes || {};
+    const serverSet = new Set();
+    Object.entries(globalRoutes).forEach(([domain, entries]) => {
+        (entries || []).forEach(entry => {
+            serverSet.add([
+                normalizeDomain(domain),
+                String(entry.task_type || entry.source_data_type || 'image').trim(),
+                String(entry.source_selector || '').trim(),
+                String(entry.target_selector || '').trim(),
+            ].join('|'));
+        });
+    });
+
+    let proposed = 0;
+    let failed = 0;
+    let skipped = 0;
+    const kept = [];
+    const seenLocal = new Set();
+    for (const route of routes) {
+        const sig = [
+            normalizeDomain(route.domain),
+            String(route.taskType || '').trim(),
+            String(route.sourceSelector || '').trim(),
+            String(route.targetSelector || '').trim(),
+        ].join('|');
+        if (serverSet.has(sig) || seenLocal.has(sig)) {
+            skipped++;
+            continue;
+        }
+        seenLocal.add(sig);
+        kept.push(route);
+        try {
+            await apiPost('/v1/field-mappings/propose', {
+                domain: normalizeDomain(route.domain),
+                task_type: route.taskType,
+                source_data_type: route.taskType,
+                source_selector: route.sourceSelector,
+                target_data_type: 'text_input',
+                target_selector: route.targetSelector,
+                proposed_field_name: route.fieldName || `${route.taskType}_default`,
+            });
+            if (route.taskType === 'image') {
+                await apiPost('/v1/locators/propose', {
+                    domain: normalizeDomain(route.domain),
+                    image_selector: route.sourceSelector,
+                    input_selector: route.targetSelector,
+                });
+            }
+            proposed++;
+        } catch (_) {
+            failed++;
+        }
+    }
+    if (kept.length !== routes.length) await storageSet({ domainFieldRoutes: kept });
+    return { proposed, failed, skipped, total: routes.length };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -99,7 +270,18 @@ async function syncAll(source) {
 chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
 
 chrome.alarms.onAlarm.addListener(alarm => {
-    if (alarm.name === SYNC_ALARM) syncAll('alarm');
+    if (alarm.name === SYNC_ALARM) {
+        syncAll('alarm');
+        // Periodic verification to keep isMaster/expiresAt fresh
+        apiGet('/v1/auth/verify').then(d => {
+            chrome.storage.local.set({
+                isMaster: !!d.is_master,
+                keyName: d.key_name || '',
+                expiresAt: d.expires_at || null,
+                lastVerify: Date.now()
+            });
+        }).catch(() => {});
+    }
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -122,7 +304,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (!changes.globalFieldRoutes && !changes.globalLocators) return;
     chrome.tabs.query({}, tabs => {
         for (const tab of tabs) {
-            chrome.tabs.sendMessage(tab.id, { type: 'ROUTES_UPDATED' }).catch(() => {});
+            try {
+                chrome.tabs.sendMessage(tab.id, { type: 'ROUTES_UPDATED' }, () => {
+                    void chrome.runtime.lastError;
+                });
+            } catch (_) {}
         }
     });
 });
@@ -136,22 +322,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // ── Text Captcha ────────────────────────────────────────────
     if (msg.type === 'SOLVE_CAPTCHA') {
         apiPost('/v1/solve', {
-            type:           'image',
+            type:           msg.taskType || 'image',
             payload_base64: msg.imageB64,
             domain:         msg.domain,
             field_name:     msg.field_name || 'image_default',
             mode:           'fast',
         })
-        .then(d => sendResponse({ ok: true, result: d.result, ms: d.processing_ms }))
+        .then(d => {
+            incrementStat('statCaptcha');
+            sendResponse({ ok: true, result: d.result, ms: d.processing_ms });
+        })
         .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
 
     // ── Verify API Key ──────────────────────────────────────────
     if (msg.type === 'VERIFY_KEY') {
-        apiGet('/v1/auth/verify')
-        .then(d => sendResponse({ ok: true, data: d }))
-        .catch(e => sendResponse({ ok: false, error: e.message }));
+        const url = msg.serverUrl || null;
+        const key = msg.apiKey || null;
+        
+        let promise;
+        if (url && key) {
+            // Manual check (e.g. from options test button)
+            promise = getDeviceId().then(devId => {
+                return fetch(`${url}/v1/auth/verify`, {
+                    headers: { 'X-API-Key': key, 'X-Device-ID': devId }
+                }).then(async r => {
+                    if (!r.ok) {
+                        const err = await r.json().catch(() => ({ detail: r.statusText }));
+                        throw new Error(err.detail || `HTTP ${r.status}`);
+                    }
+                    return r.json();
+                });
+            });
+        } else {
+            promise = apiGet('/v1/auth/verify');
+        }
+
+        promise
+            .then(d => {
+                // Persist metadata so popup/options can detect Master Mode vs User Mode
+                chrome.storage.local.set({
+                    isMaster: !!d.is_master,
+                    keyName: d.key_name || '',
+                    expiresAt: d.expires_at || null,
+                    lastVerify: Date.now()
+                });
+                sendResponse({ ok: true, data: d });
+            })
+            .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
 
@@ -162,7 +381,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             option_images_b64:  msg.optionB64s,
             domain:             msg.domain,
         })
-        .then(d => sendResponse({ ok: true, data: d }))
+        .then(d => {
+            incrementStat('statExam');
+            sendResponse({ ok: true, data: d });
+        })
         .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
@@ -175,14 +397,103 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return true;
     }
 
+    if (msg.type === 'START_LOCATE') {
+        startLocate(msg.targetField)
+        .then(r => sendResponse({ ok: true, result: r }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+
+    if (msg.type === 'VALIDATE_SELECTORS') {
+        validateSelectors(msg.sourceSelector, msg.targetSelector)
+        .then(r => sendResponse({ ok: true, result: r }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+
+    if (msg.type === 'LOCATOR_PICKED') {
+        const key = msg.targetField === 'target' ? '_locatedTarget' : '_locatedSource';
+        chrome.storage.local.set({ [key]: msg.selector, _popupPendingField: '' }, () => {
+            notifyRuntime({
+                type: 'LOCATOR_PICKED_UI',
+                targetField: msg.targetField,
+                selector: msg.selector,
+            });
+            sendResponse({ ok: true, result: { stored: true } });
+        });
+        return true;
+    }
+
+    if (msg.type === 'LOCATOR_CANCELLED') {
+        chrome.storage.local.set({ _popupPendingField: '' }, () => {
+            notifyRuntime({
+                type: 'LOCATOR_CANCELLED_UI',
+                targetField: msg.targetField,
+            });
+            sendResponse({ ok: true, result: { cancelled: true } });
+        });
+        return true;
+    }
+
+    if (msg.type === 'PROPOSE_FIELD_MAPPING') {
+        apiPost('/v1/field-mappings/propose', msg.payload)
+        .then(r => sendResponse({ ok: true, result: r }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+
+    if (msg.type === 'PROPOSE_LOCATOR') {
+        apiPost('/v1/locators/propose', {
+            domain: msg.domain,
+            image_selector: msg.img,
+            input_selector: msg.input,
+        })
+        .then(r => sendResponse({ ok: true, result: r }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+
+    if (msg.type === 'SYNC_PENDING_ROUTES') {
+        syncPendingRoutesToServer()
+        .then(r => sendResponse({ ok: true, result: r }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+
+    if (msg.type === 'INCREMENT_STAT') {
+        incrementStat(msg.key);
+        return false;
+    }
+
     // ── Interaction Recorder ────────────────────────────────────
     if (msg.type === 'RECORD_STEP') {
         chrome.storage.local.get(['rules', 'activeProfileId'], data => {
             const rules = data.rules || [];
             const rule  = msg.rule;
             rule.profile_scope = data.activeProfileId || 'default';
-            rules.push(rule);
-            chrome.storage.local.set({ rules });
+            rule.local_rule_id = rule.local_rule_id || `local_${Date.now()}`;
+            const last = rules[rules.length - 1];
+            const lastStep = last?.steps?.[0];
+            const nextStep = rule?.steps?.[0];
+            const sameLast = last
+                && last.site?.pattern === rule.site?.pattern
+                && JSON.stringify(lastStep?.selector || {}) === JSON.stringify(nextStep?.selector || {})
+                && lastStep?.action === nextStep?.action
+                && String(lastStep?.value) === String(nextStep?.value);
+            if (!sameLast) rules.push(rule);
+            chrome.storage.local.set({ rules }, () => {
+                if (!sameLast) {
+                    let host = '';
+                    try {
+                        host = sender?.tab?.url ? new URL(sender.tab.url).hostname : '';
+                    } catch (_) {}
+                    notifyRuntime({
+                        type: 'RECORD_STEP_SAVED',
+                        action: nextStep?.action || '',
+                        host,
+                    });
+                }
+            });
         });
         return false;
     }

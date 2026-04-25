@@ -449,6 +449,43 @@ class ModelRepository(BaseRepository):
                 )
                 conn.commit()
 
+    def delete_field_mapping_proposal(self, proposal_id: int) -> bool:
+        """Permanently delete a field-mapping proposal. Returns True if deleted."""
+        with self._lock:
+            with self.connect() as conn:
+                cur = conn.execute(
+                    "DELETE FROM field_mapping_proposals WHERE id = ?", (proposal_id,)
+                )
+                conn.commit()
+                return cur.rowcount > 0
+
+    def update_field_mapping_proposal(self, proposal_id: int, **fields) -> bool:
+        """Patch editable columns on a field-mapping proposal.
+
+        Accepted keys: domain, task_type, source_selector, target_selector,
+                        proposed_field_name, source_data_type, target_data_type, status
+        Returns True if a row was updated.
+        """
+        allowed = {
+            "domain", "task_type", "source_selector", "target_selector",
+            "proposed_field_name", "source_data_type", "target_data_type", "status",
+        }
+        parts, params = [], []
+        for k, v in fields.items():
+            if k in allowed and v is not None:
+                parts.append(f"{k} = ?")
+                params.append(v)
+        if not parts:
+            return False
+        params.append(proposal_id)
+        sql = f"UPDATE field_mapping_proposals SET {', '.join(parts)} WHERE id = ?"
+        with self._lock:
+            with self.connect() as conn:
+                cur = conn.execute(sql, params)
+                conn.commit()
+                return cur.rowcount > 0
+
+
     def get_field_mapped_model(
         self,
         domain: str | None,

@@ -81,6 +81,7 @@ def _hamming(a: str, b: str) -> int:
 
 
 
+
 class ExamService:
     """
     Three-layer exam question solver:

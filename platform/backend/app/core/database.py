@@ -338,6 +338,9 @@ class Database:
                 conn.execute("INSERT OR IGNORE INTO access_control (key, value) VALUES ('global_access', 'true')")
                 conn.commit()
 
+        # Ensure the master key is created on first start
+        self.api_keys.ensure_master_key()
+
     # --- Proxy Methods for Backward Compatibility ---
 
     # Settings
@@ -369,6 +372,9 @@ class Database:
     def get_api_key_rate_limit(self, *args, **kwargs): return self.api_keys.get_api_key_rate_limit(*args, **kwargs)
     def validate_or_bind_key_device(self, *args, **kwargs): return self.api_keys.validate_or_bind_key_device(*args, **kwargs)
     def get_api_key_device_binding(self, *args, **kwargs): return self.api_keys.get_api_key_device_binding(*args, **kwargs)
+    def ensure_master_key(self, *args, **kwargs): return self.api_keys.ensure_master_key(*args, **kwargs)
+    def get_master_key_info(self, *args, **kwargs): return self.api_keys.get_master_key_info(*args, **kwargs)
+    def is_master_key_hash(self, *args, **kwargs): return self.api_keys.is_master_key_hash(*args, **kwargs)
 
     # Models
     def get_model_route(self, *args, **kwargs): return self.models.get_model_route(*args, **kwargs)
@@ -390,6 +396,8 @@ class Database:
     def propose_field_mapping(self, *args, **kwargs): return self.models.propose_field_mapping(*args, **kwargs)
     def get_pending_field_mapping_proposals(self, *args, **kwargs): return self.models.get_pending_field_mapping_proposals(*args, **kwargs)
     def mark_field_mapping_proposal_status(self, *args, **kwargs): return self.models.mark_field_mapping_proposal_status(*args, **kwargs)
+    def delete_field_mapping_proposal(self, *args, **kwargs): return self.models.delete_field_mapping_proposal(*args, **kwargs)
+    def update_field_mapping_proposal(self, *args, **kwargs): return self.models.update_field_mapping_proposal(*args, **kwargs)
     def get_field_mapped_model(self, *args, **kwargs): return self.models.get_field_mapped_model(*args, **kwargs)
     def set_lifecycle_state(self, *args, **kwargs): return self.models.set_lifecycle_state(*args, **kwargs)
     def get_latest_model_by_state(self, *args, **kwargs): return self.models.get_latest_model_by_state(*args, **kwargs)
@@ -399,6 +407,8 @@ class Database:
     def get_autofill_proposals(self, *args, **kwargs): return self.autofill.get_autofill_proposals(*args, **kwargs)
     def approve_autofill_proposal(self, *args, **kwargs): return self.autofill.approve_autofill_proposal(*args, **kwargs)
     def reject_autofill_proposal(self, *args, **kwargs): return self.autofill.reject_autofill_proposal(*args, **kwargs)
+    def delete_autofill_proposal(self, *args, **kwargs): return self.autofill.delete_autofill_proposal(*args, **kwargs)
+    def update_autofill_proposal(self, *args, **kwargs): return self.autofill.update_autofill_proposal(*args, **kwargs)
     def get_approved_autofill_rules(self, *args, **kwargs): return self.autofill.get_approved_autofill_rules(*args, **kwargs)
     def propose_locator(self, *args, **kwargs): return self.autofill.propose_locator(*args, **kwargs)
     def get_pending_locators(self, *args, **kwargs): return self.autofill.get_pending_locators(*args, **kwargs)

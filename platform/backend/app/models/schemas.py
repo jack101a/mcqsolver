@@ -132,6 +132,7 @@ class VerifyResponse(BaseModel):
     valid: bool
     key_name: str
     expires_at: str | None
+    is_master: bool = False
 
 
 class KeyCreateRequest(BaseModel):

@@ -269,3 +269,86 @@ class APIKeyRepository(BaseRepository):
                 (key_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    # ── Master Key ────────────────────────────────────────────────────────────
+    # The master key is stored plaintext in platform_settings so it survives
+    # any DB migration, backup/restore, or server move.
+    # Key: "master_api_key_plain"   Value: raw key string
+    # Key: "master_api_key_id"      Value: api_keys.id (int as str)
+
+    _MASTER_KEY_PREFIX = "tata_master_"
+
+    def ensure_master_key(self) -> dict:
+        """Idempotently create the master API key.
+
+        If already created (found in platform_settings), returns the existing
+        info without touching api_keys. On first run, creates a real api_key
+        row (no expiry) and saves the plaintext in platform_settings.
+        Returns: { id, key, name }
+        """
+        with self.connect() as conn:
+            row_plain = conn.execute(
+                "SELECT value FROM platform_settings WHERE key = 'master_api_key_plain'"
+            ).fetchone()
+            row_id = conn.execute(
+                "SELECT value FROM platform_settings WHERE key = 'master_api_key_id'"
+            ).fetchone()
+
+        if row_plain and row_id:
+            return {"id": int(row_id["value"]), "key": row_plain["value"], "name": "Master Key"}
+
+        # Generate a new master key
+        import secrets, hashlib
+        raw = self._MASTER_KEY_PREFIX + secrets.token_hex(24)
+        key_hash = hashlib.sha256(raw.encode()).hexdigest()
+
+        with self._lock:
+            with self.connect() as conn:
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc).isoformat()
+                cursor = conn.execute(
+                    """
+                    INSERT INTO api_keys (name, key_hash, enabled, created_at, expires_at, revoked_at)
+                    VALUES (?, ?, 1, ?, NULL, NULL)
+                    """,
+                    ("Master Key", key_hash, now),
+                )
+                key_id = int(cursor.lastrowid)
+                # Persist plaintext + id in platform_settings (survives migrations)
+                for k, v in [
+                    ("master_api_key_plain", raw),
+                    ("master_api_key_id",    str(key_id)),
+                ]:
+                    conn.execute(
+                        """
+                        INSERT INTO platform_settings (key, value, description, updated_at)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                        """,
+                        (k, v, "Auto-managed — do not edit manually", now),
+                    )
+                conn.commit()
+
+        return {"id": key_id, "key": raw, "name": "Master Key"}
+
+    def get_master_key_info(self) -> dict | None:
+        """Return master key info if it exists, else None."""
+        with self.connect() as conn:
+            row_plain = conn.execute(
+                "SELECT value FROM platform_settings WHERE key = 'master_api_key_plain'"
+            ).fetchone()
+            row_id = conn.execute(
+                "SELECT value FROM platform_settings WHERE key = 'master_api_key_id'"
+            ).fetchone()
+        if row_plain and row_id:
+            return {"id": int(row_id["value"]), "key": row_plain["value"], "name": "Master Key"}
+        return None
+
+    def is_master_key_hash(self, key_hash: str) -> bool:
+        """Return True if the given hash belongs to the master key."""
+        info = self.get_master_key_info()
+        if not info:
+            return False
+        import hashlib
+        master_hash = hashlib.sha256(info["key"].encode()).hexdigest()
+        return key_hash == master_hash

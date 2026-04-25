@@ -7,20 +7,18 @@
 <style>
   :root {
     color-scheme: dark;
-    --bg: #121826;
+    --bg: #0f172a;
     --fg: #f1f5f9;
     --muted: #94a3b8;
-    --panel: rgba(255, 255, 255, 0.08);
+    --panel: rgba(255, 255, 255, 0.05);
     --panel-border: rgba(255, 255, 255, 0.1);
-    --field: rgba(17, 24, 39, 0.55);
+    --field: rgba(17, 24, 39, 0.7);
     --field-border: rgba(255, 255, 255, 0.12);
     --primary: #6366f1;
-    --primary-hover: #4f46e5;
     --success: #10b981;
     --danger: #f43f5e;
+    --warning: #f59e0b;
     --accent: #8b5cf6;
-    --glass: var(--panel);
-    --glass-border: var(--panel-border);
   }
 
   html[data-theme="light"] {
@@ -33,261 +31,302 @@
     --field: #fff;
     --field-border: rgba(15, 23, 42, 0.15);
     --primary: #4f46e5;
-    --primary-hover: #4338ca;
     --success: #059669;
     --danger: #dc2626;
-    --glass: var(--panel);
-    --glass-border: var(--panel-border);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  
+
   body {
-    width: 320px;
-    max-height: 550px;
-    overflow-y: auto;
-    overflow-x: hidden;
+    width: 340px;
+    min-height: 200px;
     background: var(--bg);
     color: var(--fg);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: "Inter", "Segoe UI", system-ui, sans-serif;
     font-size: 13px;
-    position: relative;
-    padding-bottom: 12px;
-    transition: background 0.3s ease, color 0.3s ease;
+    overflow-x: hidden;
   }
 
-  /* AMBIENT BACKGROUND */
-  .bg-blob {
-    position: fixed;
-    width: 200px; height: 200px;
-    filter: blur(60px);
-    opacity: 0.4;
-    z-index: -1;
-    pointer-events: none;
-    border-radius: 50%;
-  }
-  .blob-1 { top: -50px; left: -50px; background: var(--primary); }
-  .blob-2 { bottom: -50px; right: -50px; background: var(--success); }
+  .view { display: none; padding: 0; animation: fadeIn 0.3s ease-out; }
+  .view.active { display: block; }
 
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Shared Header */
   .header {
     padding: 16px;
-    display: flex; align-items: center; gap: 10px;
-    border-bottom: 1px solid var(--glass-border);
-    backdrop-filter: blur(10px);
-    background: rgba(128, 128, 128, 0.05);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--panel-border);
+    background: rgba(128, 128, 128, 0.03);
+    position: relative;
   }
+
   .logo-box {
     width: 36px; height: 36px;
-    background: linear-gradient(135deg, var(--primary), #8b5cf6);
+    background: linear-gradient(135deg, var(--primary), var(--accent));
     border-radius: 10px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 20px;
-    box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+    font-weight: 800; font-size: 18px; color: #fff;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
   }
-  .header-text h1 { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg); }
-  .header-text p { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 1px; }
 
-  .status-bar {
-    padding: 8px 16px;
-    display: flex; align-items: center; gap: 8px;
-    background: rgba(255, 255, 255, 0.02);
-    border-bottom: 1px solid var(--glass-border);
-    font-size: 11px;
-    font-weight: 500;
+  .header-text h1 { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+  .header-text p { font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.ok { background: var(--success); box-shadow: 0 0 8px var(--success); }
+  .status-dot.err { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  .status-dot.idle { background: var(--muted); }
+
+  /* AUTH VIEW */
+  #view-auth { padding: 24px 20px; text-align: center; }
+  .auth-icon { font-size: 32px; margin-bottom: 16px; }
+  .auth-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .auth-desc { font-size: 12px; color: var(--muted); margin-bottom: 24px; line-height: 1.5; }
+
+  /* USER VIEW */
+  .user-status {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+    border-bottom: 1px solid var(--panel-border);
   }
-  .dot { width: 8px; height: 8px; border-radius: 50%; position: relative; }
-  .dot.ok { background: var(--success); box-shadow: 0 0 10px var(--success); }
-  .dot.err { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
-  .dot.idle { background: var(--text-muted); }
-  #status-text { color: var(--muted); flex: 1; }
+  .conn-status { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; }
+  .expiry-badge { font-size: 10px; padding: 3px 8px; background: rgba(255,255,255,0.05); border-radius: 6px; color: var(--muted); }
 
   .section { padding: 16px; }
-  .section-title { 
-    font-size: 10px; font-weight: 700; color: var(--muted); 
-    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; 
-    display: flex; align-items: center; gap: 6px;
-  }
-  .section-title::after { content: ''; height: 1px; flex: 1; background: var(--glass-border); }
+  .section-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 800; margin-bottom: 12px; }
 
   .card {
-    background: var(--glass);
-    border: 1px solid var(--glass-border);
-    border-radius: 14px;
-    padding: 12px;
-    backdrop-filter: blur(10px);
-    margin-bottom: 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    overflow: hidden;
   }
 
   .toggle-row {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 0;
+    padding: 14px 16px;
+    transition: background 0.2s;
   }
-  .toggle-row:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.03); }
-  
-  .label-group { flex: 1; }
-  .label-main { font-weight: 600; color: var(--fg); }
-  .label-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .toggle-row:not(:last-child) { border-bottom: 1px solid var(--panel-border); }
+  .toggle-row:hover { background: rgba(255,255,255,0.02); }
 
-  /* Premium Toggle */
-  .switch { position: relative; width: 38px; height: 22px; }
+  .label-main { font-weight: 600; font-size: 13px; }
+  .label-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+  /* Switch UI */
+  .switch { position: relative; width: 40px; height: 22px; }
   .switch input { opacity: 0; width: 0; height: 0; }
   .slider {
-    position: absolute; cursor: pointer; inset: 0;
-    background: rgba(255,255,255,0.1); border-radius: 20px; transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: absolute; inset: 0; border-radius: 20px;
+    background: rgba(255, 255, 255, 0.1); cursor: pointer; transition: 0.3s;
   }
   .slider:before {
-    content: ''; position: absolute;
-    width: 16px; height: 16px; left: 3px; bottom: 3px;
-    background: #fff; border-radius: 50%; transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    content: ""; position: absolute; width: 16px; height: 16px;
+    left: 3px; top: 3px; border-radius: 50%;
+    background: #fff; transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  input:checked + .slider { background: var(--success); }
-  input:checked + .slider:before { transform: translateX(16px); }
+  .switch input:checked + .slider { background: var(--success); }
+  .switch input:checked + .slider:before { transform: translateX(18px); }
 
-  .usage-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  /* MASTER VIEW specific styles */
+  .master-badge {
+    position: absolute; top: 0; right: 0;
+    padding: 2px 8px; font-size: 9px; font-weight: 800;
+    background: var(--warning); color: #000;
+    border-bottom-left-radius: 8px;
   }
-  .stat-box {
-    padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border);
-    border-radius: 10px;
-  }
-  .stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; }
-  .stat-val { font-size: 16px; font-weight: 700; color: var(--fg); margin-top: 2px; }
 
   .btn {
-    width: 100%; padding: 10px; border-radius: 12px; border: none;
-    font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+    width: 100%; padding: 10px; border-radius: 12px;
+    border: 1px solid transparent; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s;
     display: flex; align-items: center; justify-content: center; gap: 8px;
   }
-  .btn-primary { background: var(--primary); color: #fff; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2); }
-  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.3); }
-  .btn-outline { 
-    background: var(--glass); border: 1px solid var(--glass-border); color: var(--fg);
-  }
-  .btn-outline:hover { background: rgba(128, 128, 128, 0.08); border-color: var(--fg); }
+  .btn-primary { background: var(--primary); color: #fff; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.3); }
+  .btn-outline { background: var(--panel); color: var(--fg); border-color: var(--panel-border); }
+  .btn-outline:hover { background: rgba(255,255,255,0.08); }
 
-  .footer {
-    padding: 0 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  .field-input {
+    width: 100%; border-radius: 10px; border: 1px solid var(--field-border);
+    background: var(--field); color: var(--fg); font-size: 12px;
+    padding: 10px 12px; outline: none; transition: border-color 0.2s;
   }
-  
-  .options-link {
-    display: block; text-align: center; margin-top: 16px;
-    color: var(--muted); font-size: 11px; text-decoration: none;
-    transition: color 0.2s; font-weight: 500;
-  }
-  .options-link:hover { color: var(--primary); }
+  .field-input:focus { border-color: var(--primary); }
 
-  /* Animations */
-  @keyframes slideUp {
-    from { transform: translateY(10px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+  .usage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat-box {
+    padding: 12px 8px; background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 12px; text-align: center;
   }
-  .animate-up { animation: slideUp 0.4s ease-out forwards; }
+  .stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; font-weight: 700; }
+  .stat-val { font-size: 18px; font-weight: 800; margin-top: 2px; }
+
+  .bg-blobs { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+  .blob { position: absolute; width: 250px; height: 250px; border-radius: 50%; filter: blur(80px); opacity: 0.1; }
+  .blob-p { top: -100px; left: -100px; background: var(--primary); }
+  .blob-s { bottom: -100px; right: -100px; background: var(--success); }
+
+  /* Expiry counter special styling */
+  .expiry-row { font-size: 10px; color: var(--muted); margin-top: 12px; display: flex; align-items: center; gap: 4px; justify-content: center; }
+
+  /* Dark mode scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
 </style>
 </head>
 <body>
 
-<div class="bg-blob blob-1"></div>
-<div class="bg-blob blob-2"></div>
+<div class="bg-blobs">
+  <div class="blob blob-p"></div>
+  <div class="blob blob-s"></div>
+</div>
 
+<!-- Header (Always Visible) -->
 <div class="header">
-  <div class="logo-box">🔷</div>
+  <div class="logo-box">T</div>
   <div class="header-text">
-    <h1>Unified Platform</h1>
-    <p>Premium Automation</p>
+    <h1>Tata Platform</h1>
+    <p id="sub-header">Loading...</p>
   </div>
-  <button id="themeToggleBtn" style="margin-left: auto; background: none; border: none; font-size: 16px; cursor: pointer;">☀️</button>
-  <div style="font-size: 10px; padding: 4px 10px; background: var(--success); border-radius: 100px; font-weight: 700; color: #fff;" id="plan-badge">PRO</div>
+  <div id="master-tag" class="master-badge" style="display:none;">MASTER</div>
 </div>
 
-<div class="status-bar">
-  <div class="dot idle" id="conn-dot"></div>
-  <span id="status-text">Connecting...</span>
-</div>
-
-<div class="section animate-up" style="animation-delay: 0.1s;">
-  <div class="section-title">Core Services</div>
-  <div class="card">
-    <div class="toggle-row">
-      <div class="label-group">
-        <div class="label-main">Captcha Solver</div>
-        <div class="label-sub">Real-time ONNX extraction</div>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="tog-captcha">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <div class="toggle-row">
-      <div class="label-group">
-        <div class="label-main">Exam Solver</div>
-        <div class="label-sub">Sarathi MCQ bypass</div>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="tog-exam">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <div class="toggle-row">
-      <div class="label-group">
-        <div class="label-main">Autofill V26</div>
-        <div class="label-sub">Smart field playback</div>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="tog-autofill">
-        <span class="slider"></span>
-      </label>
-    </div>
+<!-- 1. AUTH/SETUP VIEW -->
+<div id="view-auth" class="view">
+  <div class="auth-icon">🔑</div>
+  <div class="auth-title">Authentication</div>
+  <div class="auth-desc">Enter your secret key to connect to the platform. Regular users get simplified tools; Master keys unlock everything.</div>
+  
+  <div style="margin-bottom: 16px;">
+    <input type="password" id="input-key" class="field-input" placeholder="Enter API Key (tata_...)">
   </div>
-</div>
-
-<div class="section animate-up" style="padding-top: 0; animation-delay: 0.2s;">
-  <div class="section-title">V26 Engine Controls</div>
-  <div class="card">
-    <div style="margin-bottom: 12px; display: flex; justify-content: space-between; font-size: 11px;">
-      <span style="color: var(--text-muted);">Active Profile:</span>
-      <span style="color: var(--success); font-weight: 700;" id="active-profile-name">Default</span>
-    </div>
-    <div class="toggle-row" style="margin-bottom: 8px;">
-      <div class="label-group">
-        <div class="label-main" style="color: #fb7185;">Record Interactions</div>
-        <div class="label-sub">Capture rule sequences</div>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="tog-record">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <button class="btn btn-outline" id="btn-force-autofill">
-      <span style="font-size: 14px;">⚡</span> Force Run Autofill
-    </button>
+  <div style="margin-bottom: 24px;">
+    <input type="text" id="input-url" class="field-input" placeholder="Server URL (http://...)" value="http://localhost:8000">
   </div>
+  
+  <button id="btn-auth-submit" class="btn btn-primary">Connect Account</button>
+  <div id="auth-error" style="color:var(--danger); font-size:11px; margin-top:12px; font-weight:600; min-height:16px;"></div>
 </div>
 
-<div class="section animate-up" style="padding-top: 0; animation-delay: 0.3s;">
-  <div class="section-title">Daily Statistics</div>
-  <div class="usage-grid" style="grid-template-columns: repeat(3, 1fr);">
-    <div class="stat-box">
-      <div class="stat-label">Captcha</div>
-      <div class="stat-val" id="u-captcha">—</div>
+<!-- 2. USER VIEW (Minimal) -->
+<div id="view-user" class="view">
+  <div class="user-status">
+    <div class="conn-status">
+      <span class="status-dot ok" id="user-dot"></span>
+      <span id="user-status-text">Connected</span>
     </div>
-    <div class="stat-box">
-      <div class="stat-label">Exam</div>
-      <div class="stat-val" id="u-exam">—</div>
+    <div class="expiry-badge" id="user-expiry">-- days remaining</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Automation Controls</div>
+    <div class="card">
+      <div class="toggle-row">
+        <div>
+          <div class="label-main">Autofill Engine</div>
+          <div class="label-sub">Smart field detection</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="user-tog-autofill">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="label-main">Captcha Solver</div>
+          <div class="label-sub">Auto-solve on detect</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="user-tog-captcha">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="label-main">MCQ Assistant</div>
+          <div class="label-sub">Exam question helper</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="user-tog-exam">
+          <span class="slider"></span>
+        </label>
+      </div>
     </div>
-    <div class="stat-box">
-      <div class="stat-label">Fill</div>
-      <div class="stat-val" id="u-fill">—</div>
+    
+    <div class="expiry-row">
+      <span>Key: </span>
+      <span id="user-key-name" style="font-weight:700; color:var(--fg);">--</span>
+      <span style="margin-left:8px;">•</span>
+      <button id="btn-logout" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:10px; font-weight:700;">Logout</button>
     </div>
   </div>
 </div>
 
-<div class="footer animate-up" style="animation-delay: 0.4s;">
-  <button class="btn btn-outline" id="btn-verify">Verify</button>
-  <button class="btn btn-primary" id="btn-options">Settings</button>
-</div>
+<!-- 3. MASTER VIEW (Full) -->
+<div id="view-master" class="view">
+  <div class="user-status">
+    <div class="conn-status">
+      <span class="status-dot ok" id="master-dot"></span>
+      <span>Administrative Access</span>
+    </div>
+    <button id="btn-master-logout" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:10px;">Switch Key</button>
+  </div>
 
-<a href="#" class="options-link" id="link-options">Open Full Dashboard →</a>
+  <div class="section" style="padding-bottom:0;">
+    <div class="section-title">Core Services</div>
+    <div class="card">
+      <div class="toggle-row">
+        <div class="label-main">Autofill</div>
+        <label class="switch"><input type="checkbox" id="tog-autofill"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div class="label-main">Captcha</div>
+        <label class="switch"><input type="checkbox" id="tog-captcha"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div class="label-main">Exam</div>
+        <label class="switch"><input type="checkbox" id="tog-exam"><span class="slider"></span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="usage-grid">
+      <div class="stat-box">
+        <div class="stat-label">Captcha</div>
+        <div class="stat-val" id="u-captcha">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Exam</div>
+        <div class="stat-val" id="u-exam">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Fills</div>
+        <div class="stat-val" id="u-fill">0</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" style="padding-top:0;">
+    <div class="section-title">Advanced Tools</div>
+    <div class="card" style="padding: 12px; gap: 8px; display: flex; flex-direction: column;">
+      <button class="btn btn-outline" id="btn-record">Start Rule Recording</button>
+      <button class="btn btn-outline" id="btn-sync-routes">Sync Rules with Cloud</button>
+      <button class="btn btn-primary" id="btn-dashboard">Open Admin Dashboard</button>
+    </div>
+  </div>
+</div>
 
 <script src="popup.js"></script>
 </body>

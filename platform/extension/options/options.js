@@ -43,8 +43,38 @@ function showMsg(msgId, text, isOk = true) {
 
 // ── Initialization ───────────────────────────────────────────────────────────
 async function init() {
-    const data = await storageGet(['apiKey', 'serverUrl', 'profiles', 'activeProfileId', 'rules', 'autofillSettings', 'captchaEnabled', 'solverEnabled', 'autofillEnabled', 'autoRefresh', 'autoScreenshot', 'theme']);
+    const data = await storageGet(['apiKey', 'serverUrl', 'isMaster', 'profiles', 'activeProfileId', 'rules', 'autofillSettings', 'captchaEnabled', 'solverEnabled', 'autofillEnabled', 'autoRefresh', 'autoScreenshot', 'theme']);
     
+    // Check Master Access
+    if (!data.isMaster && data.apiKey) {
+        document.body.innerHTML = `
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 40px; text-align:center;">
+                <div style="font-size: 48px; margin-bottom: 20px;">🛡️</div>
+                <h1 style="font-size: 24px; font-weight: 800; margin-bottom: 12px;">Restricted Access</h1>
+                <p style="color:var(--muted); max-width: 400px; line-height: 1.6; margin-bottom: 30px;">
+                    This options page contains advanced configuration tools reserved for Master Key holders. 
+                    Regular users can manage their settings directly through the extension popup.
+                </p>
+                <button onclick="window.close()" style="background:var(--primary); color:#fff; border:none; padding:12px 24px; border-radius:12px; font-weight:600; cursor:pointer;">Close Settings</button>
+            </div>
+        `;
+        return;
+    }
+
+    if (!data.apiKey) {
+        document.body.innerHTML = `
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 40px; text-align:center;">
+                <div style="font-size: 48px; margin-bottom: 20px;">🔑</div>
+                <h1 style="font-size: 24px; font-weight: 800; margin-bottom: 12px;">Authentication Required</h1>
+                <p style="color:var(--muted); max-width: 400px; line-height: 1.6; margin-bottom: 30px;">
+                    Please enter your secret key in the extension popup first to access settings.
+                </p>
+                <button onclick="window.close()" style="background:var(--primary); color:#fff; border:none; padding:12px 24px; border-radius:12px; font-weight:600; cursor:pointer;">Close</button>
+            </div>
+        `;
+        return;
+    }
+
     // Theme
     state.theme = data.theme || 'dark';
     applyTheme(state.theme);
@@ -168,10 +198,12 @@ el('btn-test').addEventListener('click', () => {
 async function verifyKey(apiKey, serverUrl) {
     showMsg('conn-msg', 'Verifying…');
     try {
-        const resp = await fetch(`${serverUrl}/v1/auth/verify`, {
-            headers: { 'X-API-Key': apiKey }
+        const raw = await new Promise(resolve => {
+            chrome.runtime.sendMessage({ type: 'VERIFY_KEY', apiKey, serverUrl }, resolve);
         });
-        const data = await resp.json();
+        if (!raw) throw new Error('No response from extension background');
+        if (raw.ok === false) throw new Error(raw.error || 'Request failed');
+        const data = raw.data || raw;
         if (data.valid) {
             el('key-name').value = data.key_name;
             el('key-expires').value = data.expires_at || 'Never';
@@ -180,7 +212,7 @@ async function verifyKey(apiKey, serverUrl) {
             showMsg('conn-msg', '✗ Invalid API Key', false);
         }
     } catch (e) {
-        showMsg('conn-msg', '✗ Connection failed', false);
+        showMsg('conn-msg', '✗ Connection failed: ' + e.message, false);
     }
 }
 

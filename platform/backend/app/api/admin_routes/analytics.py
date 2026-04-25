@@ -97,6 +97,7 @@ async def admin_bootstrap(request: Request):
         "datasets_dir": str(_DATASETS_DIR),
         "datasets_files": datasets_files,
         "cloud_backup_configured": bool(os.getenv("BACKUP_CLOUD_UPLOAD_URL", "").strip()),
+        "master_key_info": container.db.get_master_key_info(),
     }
 
 @router.get("/", response_class=HTMLResponse)
