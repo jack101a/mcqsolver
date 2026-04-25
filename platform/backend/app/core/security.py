@@ -40,11 +40,19 @@ def is_expired(expires_at: str | None) -> bool:
 
 
 def is_valid_base64(payload: str) -> bool:
-    """Validate if payload is decodable base64."""
+    """
+    Validate if payload is decodable base64.
 
+    Handles data-URI prefixes (e.g. ``data:image/png;base64,<data>``) that
+    browsers produce — the prefix is stripped before validation so callers
+    do not need to pre-process the string.
+    """
     try:
-        base64.b64decode(payload, validate=True)
+        raw = payload
+        # Strip data-URI prefix before validating
+        if raw.startswith("data:") and "," in raw:
+            raw = raw.split(",", 1)[1]
+        base64.b64decode(raw, validate=True)
         return True
     except Exception:
         return False
-

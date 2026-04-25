@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _DEFAULT_CONFIG: dict[str, Any] = {
     "app_name": "unified-platform",
@@ -44,7 +44,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     },
     "storage": {"sqlite_path": "backend/logs/app.db"},
     "retrain": {"worker_enabled": False},
-    # ── NEW: Exam service config ───────────────────────────────────────────────
+    # ── Exam service config ────────────────────────────────────────────────────
     "exam": {
         "litellm_endpoint": "",       # e.g. https://llm.example.com/v1/chat/completions
         "litellm_api_key": "",
@@ -55,7 +55,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "sign_hashes_path": "backend/app/data/sign_hashes.json",
         "sign_labels_path": "backend/app/data/sign_label.json",
     },
-    # ── NEW: WhatsApp admin alert ──────────────────────────────────
+    # ── WhatsApp admin alert ───────────────────────────────────────────────────
     "alerts": {
         "whatsapp_enabled": False,
         "callmebot_phone": "",        # E.164 format: +91xxxxxxxxxx
@@ -81,6 +81,26 @@ class AuthConfig(BaseModel):
     key_length: int = 32
     default_expiry_days: int = 90
 
+    @field_validator("hash_salt")
+    @classmethod
+    def hash_salt_must_not_be_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError(
+                "AUTH_HASH_SALT must not be empty — set it in your .env file. "
+                "An empty salt makes all API keys trivially equivalent."
+            )
+        return v
+
+    @field_validator("admin_token")
+    @classmethod
+    def admin_token_must_not_be_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError(
+                "ADMIN_TOKEN must not be empty — set it in your .env file. "
+                "An empty token allows unauthenticated admin access."
+            )
+        return v
+
 
 class RateLimitConfig(BaseModel):
     requests_per_minute: int = 60
@@ -94,8 +114,11 @@ class QueueConfig(BaseModel):
 
 
 class LoggingConfig(BaseModel):
+    model_config = {"populate_by_name": True}
+
     level: str = "INFO"
     debug: bool = False
+    # The YAML key is "json"; we expose it as json_logs in Python code.
     json_logs: bool = Field(default=True, alias="json")
 
 
@@ -122,6 +145,7 @@ class ExamConfig(BaseModel):
     litellm_api_key: str = ""
     litellm_model: str = "gemma-4-31b-it_gemini"
     ocr_lang: str = "eng+hin"
+    tessdata_path: str = "backend/tessdata"
     question_data_path: str = "backend/app/data/questions.json"
     sign_hashes_path: str = "backend/app/data/sign_hashes.json"
     sign_labels_path: str = "backend/app/data/sign_label.json"
@@ -152,8 +176,10 @@ def _read_yaml_config(config_path: Path) -> dict[str, Any]:
         try:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(yaml.safe_dump(_DEFAULT_CONFIG, sort_keys=False), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            # Log to stderr rather than swallowing silently
+            import sys
+            print(f"WARNING: could not write default config to {config_path}: {exc}", file=sys.stderr)
         return deepcopy(_DEFAULT_CONFIG)
     with config_path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}

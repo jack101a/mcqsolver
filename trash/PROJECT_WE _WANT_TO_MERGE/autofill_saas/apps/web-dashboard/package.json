@@ -1,0 +1,11 @@
+{
+  "name": "@autofill/web-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"Bundle dashboard app\"",
+    "dev": "node ../../scripts/serve-static.mjs ./src 4101",
+    "validate:ui": "node ./scripts/validate-ui-contract.mjs"
+  }
+}

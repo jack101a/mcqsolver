@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; width: 280px; padding: 15px; background: #fff; color: #333; margin: 0; }
+    
+    /* Header & Switch */
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .title { font-size: 16px; font-weight: 700; color: #2563eb; display: flex; align-items: center; gap: 5px; }
+    
+    /* Switch */
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .4s; border-radius: 34px; }
+    .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+    input:checked + .slider { background-color: #2563eb; }
+    input:checked + .slider:before { transform: translateX(16px); }
+
+    /* Profile Row */
+    .profile-row { display: flex; gap: 8px; margin-bottom: 15px; align-items: center; }
+    select { flex-grow: 1; padding: 8px; border-radius: 6px; border: 1px solid #d1d5db; background: #f8fafc; font-size: 13px; outline: none; }
+    .btn-icon { padding: 8px; background: #eff6ff; border: 1px solid #dbeafe; color: #2563eb; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    .btn-icon:hover { background: #dbeafe; }
+
+    /* Main Buttons */
+    .btn { width: 100%; padding: 12px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    
+    .btn-record { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+    .btn-record:hover { background: #e2e8f0; }
+    .btn-record.recording { background: #fee2e2; color: #dc2626; border-color: #fca5a5; animation: pulse 2s infinite; }
+    
+    .btn-dash { background: white; color: #2563eb; border: 1px solid #2563eb; }
+    .btn-dash:hover { background: #eff6ff; }
+
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.8; } 100% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">⚡ Autofill</div>
+    <label class="switch" title="Master Toggle">
+      <input type="checkbox" id="masterSwitch">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="profile-row">
+    <select id="profileSelect" title="Select Active Profile"></select>
+    <button id="btnAddProfile" class="btn-icon" title="Create New Profile">＋</button>
+  </div>
+  
+  <button id="btnRecord" class="btn btn-record">
+    <span class="icon">●</span> <span id="recText">Start Recording</span>
+  </button>
+  
+  <button id="btnDash" class="btn btn-dash">
+    Open Dashboard
+  </button>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

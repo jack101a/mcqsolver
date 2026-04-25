@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+from contextlib import asynccontextmanager
 from pathlib import Path as _Path
 
 from fastapi import FastAPI
@@ -18,15 +18,41 @@ from app.middleware.auth_middleware import AuthMiddleware
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.rate_limit_middleware import RateLimitMiddleware
 
-settings  = get_settings()
+settings = get_settings()
 configure_logging(settings=settings)
 container = build_container(settings=settings)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Manage startup and shutdown lifecycle."""
+    # ── Startup ───────────────────────────────────────────────────────────────
+    await container.solver_service.start()
+    # Send WhatsApp notification that server is online (non-blocking, runs in
+    # a thread so the blocking urllib call never stalls the event loop)
+    container.alert_service.notify_server_start()
+
+    yield
+
+    # ── Shutdown ──────────────────────────────────────────────────────────────
+    await container.solver_service.stop()
+
+    # Guard: retrain_service is optional — only wired when the feature is on
+    retrain = getattr(container, "retrain_service", None)
+    if retrain is not None:
+        await retrain.stop()
+
+    # Close the exam service HTTP client via the public helper so we never
+    # depend on private attribute names.
+    await container.exam_service.close()
+
 
 app = FastAPI(
     title="Unified Platform API",
     description="Text Captcha · MCQ Exam Solver · Autofill — Multi-user SaaS",
     version="2.0.0",
     debug=settings.server.debug,
+    lifespan=lifespan,
 )
 app.state.container = container
 
@@ -59,19 +85,3 @@ if _admin_assets.exists():
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "unified-platform", "version": "2.0.0"}
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    await container.solver_service.start()
-    # WhatsApp: notify admin server is online
-    container.alert_service.notify_server_start()
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    await container.solver_service.stop()
-    if container.settings.retrain.worker_enabled:
-        await container.retrain_service.stop()
-    # Close exam service HTTP client
-    await container.exam_service._http.aclose()

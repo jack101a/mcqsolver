@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import time
 import uuid
@@ -38,9 +39,16 @@ router = APIRouter(prefix="/v1", tags=["v1"])
 
 _REPORT_WINDOW_SECONDS  = 60
 _REPORT_MAX_PER_WINDOW  = 20
-_report_buckets: dict[tuple[int, str], deque[float]] = {}
+# Maximum report upload size: 5 MB of raw binary (before base64 expansion ~3.75 MB)
+_REPORT_MAX_BYTES       = 5 * 1024 * 1024
 _PROJECT_ROOT  = Path(__file__).resolve().parents[3]
 _DATASETS_DIR  = (_PROJECT_ROOT / "backend" / "datasets").resolve()
+
+# Per-(key_id, domain) sliding-window deques for report rate limiting.
+# Pruned periodically to prevent unbounded memory growth.
+_report_buckets: dict[tuple[int, str], deque[float]] = {}
+_REPORT_PRUNE_INTERVAL = 300  # seconds between prune passes
+_last_prune: float = 0.0
 
 
 def _normalize_domain(domain: str | None) -> str:
@@ -58,7 +66,25 @@ def _normalize_domain(domain: str | None) -> str:
     return token
 
 
+def _prune_report_buckets() -> None:
+    """Remove expired entries from _report_buckets to prevent memory leaks."""
+    global _last_prune
+    now = time.monotonic()
+    if now - _last_prune < _REPORT_PRUNE_INTERVAL:
+        return
+    _last_prune = now
+    dead_keys = []
+    for key, q in list(_report_buckets.items()):
+        while q and (now - q[0]) > _REPORT_WINDOW_SECONDS:
+            q.popleft()
+        if not q:
+            dead_keys.append(key)
+    for key in dead_keys:
+        _report_buckets.pop(key, None)
+
+
 def _allow_report(key_id: int, domain: str) -> bool:
+    _prune_report_buckets()
     now = time.monotonic()
     bucket_key = (key_id, domain)
     q = _report_buckets.setdefault(bucket_key, deque())
@@ -110,6 +136,8 @@ async def solve(request: Request, payload: SolveRequest) -> SolveResponse:
             ip=client_ip,
         )
         return SolveResponse(**solved)
+    except HTTPException:
+        raise
     except Exception as error:
         container.usage_service.record(
             key_id=int(key_record["id"]),
@@ -144,13 +172,20 @@ async def report(request: Request, payload: ReportRequest) -> dict:
         raw = payload.payload_base64
         if "," in raw and raw.startswith("data:"):
             raw = raw.split(",", 1)[1]
-        binary   = base64.b64decode(raw)
+        binary = base64.b64decode(raw)
+
+        # Enforce upload size limit to prevent disk exhaustion
+        if len(binary) > _REPORT_MAX_BYTES:
+            raise HTTPException(413, f"Payload too large (max {_REPORT_MAX_BYTES // 1024} KB)")
+
         file_id  = uuid.uuid4().hex[:12]
         filename = f"{normalized}_{file_id}.png"
         filepath = _DATASETS_DIR / filename
         with filepath.open("wb") as f:
             f.write(binary)
         return {"status": "reported", "filename": filename}
+    except HTTPException:
+        raise
     except Exception as error:
         logger.exception("report_failed", extra={"context": {"error": str(error)}})
         raise HTTPException(500, "report failed") from error
@@ -264,10 +299,9 @@ async def autofill_rule_proposals(request: Request, payload: AutofillRuleProposa
     """Extension submits a recorded rule (V26 engine) for admin review."""
     container = request.app.state.container
     key_record = request.state.api_key_record
-    
-    # rule_json stores the full 'rule' part of the payload
+
     rule_json = payload.rule.model_dump_json()
-    
+
     proposal = container.db.submit_autofill_proposal(
         idempotency_key=payload.idempotency_key,
         device_id=payload.client.device_id,
@@ -283,18 +317,16 @@ async def autofill_sync(request: Request) -> AutofillRuleSyncResponse:
     """Extension downloads approved rules (V26 engine) for local playback."""
     container = request.app.state.container
     approved_rows = container.db.get_approved_autofill_rules()
-    
+
     rules: list[AutofillRule] = []
-    import json
     for row in approved_rows:
         try:
-            # Parse the stored rule_json and inject the server_rule_id
             rule_data = json.loads(row["rule_json"])
             rule_data["server_rule_id"] = row["approved_rule_id"]
             rules.append(AutofillRule(**rule_data))
         except Exception:
             logger.exception("failed_to_parse_approved_rule", extra={"context": {"id": row["id"]}})
-            
+
     return AutofillRuleSyncResponse(rules=rules)
 
 
@@ -340,6 +372,8 @@ async def revoke_key(request: Request, payload: KeyRevokeRequest) -> dict:
 
 @router.get("/locators")
 async def get_locators(request: Request) -> dict:
+    # NOTE: This endpoint intentionally has no API-key auth — locators are
+    # public metadata that the extension reads before authenticating.
     container = request.app.state.container
     return container.db.get_approved_locators()
 

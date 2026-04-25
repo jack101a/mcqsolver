@@ -99,8 +99,9 @@ class ExamService:
             with sh_path.open(encoding="utf-8") as f:
                 raw = json.load(f)
             if raw:
-                first_val = next(iter(raw.values()))
-                self._sign_hashes = {v: k for k, v in raw.items()} if len(first_val) > 20 else raw
+                # Heuristic: if values look like hashes (long hex strings), invert
+                sample = next(iter(raw.values()))
+                self._sign_hashes = {v: k for k, v in raw.items()} if len(sample) > 20 else raw
             logger.info("sign_hashes_loaded", extra={"context": {"count": len(self._sign_hashes)}})
 
         sl_path = data_dir / "sign_label.json"
@@ -108,6 +109,9 @@ class ExamService:
         if sl_path.exists():
             with sl_path.open(encoding="utf-8") as f:
                 self._sign_labels = json.load(f)
+
+    async def close(self) -> None:
+        await self._http.aclose()
 
     # ── Runtime settings (from admin dashboard DB) ────────────────────────────
 
@@ -155,14 +159,15 @@ class ExamService:
         try:
             lang      = self._ocr_lang()
             tess_dir  = self._tessdata_dir()
-            env_copy  = {}
+            orig_env  = os.environ.copy()
             if tess_dir:
-                env_copy["TESSDATA_PREFIX"] = tess_dir
-            text = pytesseract.image_to_string(
-                img, lang=lang, config="--psm 6",
-                **({"pytesseract_config": ""} if not env_copy else {}),
-            )
-            return text.strip()
+                os.environ["TESSDATA_PREFIX"] = tess_dir
+            try:
+                text = pytesseract.image_to_string(img, lang=lang, config="--psm 6")
+                return text.strip()
+            finally:
+                os.environ.clear()
+                os.environ.update(orig_env)
         except Exception as e:
             logger.warning("ocr_failed", extra={"context": {"error": str(e)}})
             return ""

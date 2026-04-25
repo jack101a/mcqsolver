@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.services.cache_service import CacheService
 from app.services.model_router import ModelRouter
 
@@ -50,12 +52,22 @@ class SolverService:
             self._worker_tasks.append(task)
 
     async def stop(self) -> None:
-        """Cancel worker tasks."""
+        """Cancel worker tasks and drain in-flight futures."""
 
         for task in self._worker_tasks:
             task.cancel()
         await asyncio.gather(*self._worker_tasks, return_exceptions=True)
         self._worker_tasks.clear()
+
+        # Reject any jobs still sitting in the queue so callers don't hang
+        while not self._queue.empty():
+            try:
+                job = self._queue.get_nowait()
+                if not job.future.done():
+                    job.future.set_exception(RuntimeError("Server shutting down"))
+                self._queue.task_done()
+            except asyncio.QueueEmpty:
+                break
 
     async def submit(
         self,
@@ -103,18 +115,24 @@ class SolverService:
                 }
             },
         )
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()  # Replaces deprecated get_event_loop()
         future: asyncio.Future = loop.create_future()
-        await self._queue.put(
-            SolveJob(
-                task_type=task_type,
-                payload_base64=payload_base64,
-                mode=mode,
-                domain=domain,
-                field_name=field_name,
-                future=future,
+
+        try:
+            self._queue.put_nowait(
+                SolveJob(
+                    task_type=task_type,
+                    payload_base64=payload_base64,
+                    mode=mode,
+                    domain=domain,
+                    field_name=field_name,
+                    future=future,
+                )
             )
-        )
+        except asyncio.QueueFull:
+            # Return 503 immediately rather than blocking the caller indefinitely
+            raise HTTPException(status_code=503, detail="Solver queue full — try again shortly")
+
         return await future
 
     async def _worker_loop(self, worker_id: int) -> None:
@@ -136,8 +154,7 @@ class SolverService:
                         }
                     },
                 )
-                
-                # ModelRouter now returns a dict with 'result' and 'model_used'
+
                 routing_result = await self._model_router.solve(
                     task_type=job.task_type,
                     payload_base64=job.payload_base64,
@@ -145,7 +162,7 @@ class SolverService:
                     domain=job.domain,
                     field_name=job.field_name,
                 )
-                
+
                 elapsed = int((time.perf_counter() - started) * 1000)
                 logger.info(
                     "model_execution_end",
@@ -164,7 +181,7 @@ class SolverService:
                     "result": routing_result["result"],
                     "processing_ms": elapsed,
                     "model_used": routing_result["model_used"],
-                    "cached": False
+                    "cached": False,
                 }
                 self._cache.set(
                     job.task_type,

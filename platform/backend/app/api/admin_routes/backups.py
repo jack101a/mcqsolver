@@ -1,0 +1,168 @@
+from __future__ import annotations
+import json
+import urllib.request
+import urllib.error
+from pathlib import Path
+from datetime import datetime
+from fastapi import APIRouter, Request, Form, File, UploadFile, HTTPException, Response
+from fastapi.responses import RedirectResponse, JSONResponse
+from .utils import _admin_guard, _write_auto_backup, _wants_json
+
+router = APIRouter(tags=["admin-backups"])
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_BACKUPS_DIR = (_PROJECT_ROOT / "backend" / "backups").resolve()
+
+@router.get("/export/field-mappings.json")
+async def export_field_mappings(request: Request):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    payload = {
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "field_mappings": container.db.get_all_field_mappings(),
+    }
+    return Response(
+        content=json.dumps(payload, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="field-mappings-export.json"'},
+    )
+
+@router.get("/export/master-setup.json")
+async def export_master_setup(request: Request):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    payload = container.db.export_master_setup()
+    return Response(
+        content=json.dumps(payload, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="master-setup-export.json"'},
+    )
+
+@router.post("/backups/create")
+async def create_backup_now(request: Request):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    _write_auto_backup(container, "manual_backup")
+    if _wants_json(request):
+        return JSONResponse(status_code=200, content={"ok": True})
+    return RedirectResponse(url="/admin/?test_status=ok&test_message=Backup+created", status_code=303)
+
+@router.get("/backups")
+async def list_backups(request: Request):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    _BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+    backups = []
+    for item in sorted(_BACKUPS_DIR.glob("master-setup-*.json"), reverse=True):
+        stat = item.stat()
+        backups.append(
+            {
+                "name": item.name,
+                "size_bytes": int(stat.st_size),
+                "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            }
+        )
+    return {"backups": backups}
+
+@router.post("/backups/restore-latest")
+async def restore_latest_backup(request: Request):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    latest = _BACKUPS_DIR / "latest-master-setup.json"
+    if not latest.exists():
+        raise HTTPException(status_code=404, detail="latest backup not found")
+    payload = json.loads(latest.read_text(encoding="utf-8"))
+    container = request.app.state.container
+    container.db.import_master_setup(payload)
+    _write_auto_backup(container, "restore_latest_backup")
+    if _wants_json(request):
+        return JSONResponse(status_code=200, content={"ok": True, "message": "Latest backup restored"})
+    return RedirectResponse(url="/admin/?test_status=ok&test_message=Latest+backup+restored", status_code=303)
+
+@router.post("/backups/cloud/push")
+async def push_cloud_backup(request: Request):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    import os
+    upload_url = os.getenv("BACKUP_CLOUD_UPLOAD_URL", "").strip()
+    if not upload_url:
+        raise HTTPException(status_code=400, detail="cloud backup upload url not configured")
+    token = os.getenv("BACKUP_CLOUD_TOKEN", "").strip()
+    container = request.app.state.container
+    payload = container.db.export_master_setup()
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(upload_url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            if resp.status >= 400:
+                raise HTTPException(status_code=502, detail=f"cloud backup failed ({resp.status})")
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"cloud backup failed ({exc.code})") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"cloud backup failed: {exc}") from exc
+    _write_auto_backup(container, "cloud_backup_push")
+    return JSONResponse(status_code=200, content={"ok": True})
+
+@router.post("/backups/cloud/pull")
+async def pull_cloud_backup(request: Request):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    import os
+    download_url = os.getenv("BACKUP_CLOUD_DOWNLOAD_URL", "").strip()
+    if not download_url:
+        raise HTTPException(status_code=400, detail="cloud backup download url not configured")
+    token = os.getenv("BACKUP_CLOUD_TOKEN", "").strip()
+    req = urllib.request.Request(download_url, method="GET")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read()
+            payload = json.loads(body.decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"cloud restore failed ({exc.code})") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"cloud restore failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="cloud payload invalid")
+    container = request.app.state.container
+    container.db.import_master_setup(payload)
+    _write_auto_backup(container, "cloud_backup_pull")
+    return JSONResponse(status_code=200, content={"ok": True})
+
+@router.post("/import/master-setup")
+async def import_master_setup(
+    request: Request,
+    setup_file: UploadFile = File(...),
+):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    try:
+        raw = await setup_file.read()
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid setup JSON")
+    except Exception as exc:
+        if _wants_json(request):
+            return JSONResponse(status_code=400, content={"ok": False, "message": f"invalid setup file: {exc}"})
+        raise HTTPException(status_code=400, detail=f"invalid setup file: {exc}") from exc
+    container = request.app.state.container
+    container.db.import_master_setup(payload)
+    _write_auto_backup(container, "import_master_setup")
+    if _wants_json(request):
+        return JSONResponse(status_code=200, content={"ok": True, "message": "Master setup imported"})
+    return RedirectResponse(url="/admin/?test_status=ok&test_message=Master+setup+imported", status_code=303)

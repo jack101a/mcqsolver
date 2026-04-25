@@ -1,0 +1,89 @@
+{
+  "generatedAt": "2026-03-29T16:51:36.029Z",
+  "contentScriptPath": "E:\\codex\\autofill_saas\\apps\\extension-chrome\\src\\content.js",
+  "threshold": 0.8,
+  "results": [
+    {
+      "fixtureId": "job-application",
+      "expectedKeys": [
+        "full_name",
+        "email",
+        "phone"
+      ],
+      "detectedKeys": [
+        "full_name",
+        "email",
+        "phone"
+      ],
+      "expectedCount": 3,
+      "detectedCount": 3,
+      "matchedCount": 3,
+      "detectionAccuracy": 1,
+      "fillSuccessRate": 1,
+      "fillSummary": {
+        "totalDetected": 3,
+        "totalPlanned": 3,
+        "successCount": 3
+      },
+      "passesDetectionGate": true,
+      "passesFillGate": true
+    },
+    {
+      "fixtureId": "checkout-form",
+      "expectedKeys": [
+        "full_name",
+        "email",
+        "phone"
+      ],
+      "detectedKeys": [
+        "full_name",
+        "email",
+        "phone"
+      ],
+      "expectedCount": 3,
+      "detectedCount": 3,
+      "matchedCount": 3,
+      "detectionAccuracy": 1,
+      "fillSuccessRate": 1,
+      "fillSummary": {
+        "totalDetected": 3,
+        "totalPlanned": 3,
+        "successCount": 3
+      },
+      "passesDetectionGate": true,
+      "passesFillGate": true
+    },
+    {
+      "fixtureId": "contact-table",
+      "expectedKeys": [
+        "full_name",
+        "email",
+        "phone"
+      ],
+      "detectedKeys": [
+        "full_name",
+        "email",
+        "phone"
+      ],
+      "expectedCount": 3,
+      "detectedCount": 3,
+      "matchedCount": 3,
+      "detectionAccuracy": 1,
+      "fillSuccessRate": 1,
+      "fillSummary": {
+        "totalDetected": 3,
+        "totalPlanned": 3,
+        "successCount": 3
+      },
+      "passesDetectionGate": true,
+      "passesFillGate": true
+    }
+  ],
+  "summary": {
+    "websitesTested": 3,
+    "avgDetectionAccuracy": 1,
+    "avgFillSuccessRate": 1,
+    "detectionGatePassed": true,
+    "fillGatePassed": true
+  }
+}

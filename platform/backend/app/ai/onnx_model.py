@@ -17,10 +17,6 @@ from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
-VOCAB = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-TARGET_HEIGHT = 54
-TARGET_WIDTH = 250
-
 
 class OnnxAIModel(BaseAIModel):
     """ONNX inference model with CTC decoding, loaded from a specific path."""
@@ -31,6 +27,20 @@ class OnnxAIModel(BaseAIModel):
         self._session: ort.InferenceSession | None = None
         self._input_name: str | None = None
         self._output_name: str | None = None
+
+    # ── Derived config helpers — always read from settings, never hardcoded ───
+
+    @property
+    def _vocab(self) -> str:
+        return self._settings.model.onnx_vocab
+
+    @property
+    def _target_height(self) -> int:
+        return self._settings.model.onnx_height
+
+    @property
+    def _target_width(self) -> int:
+        return self._settings.model.onnx_width
 
     def _ensure_loaded(self) -> None:
         """Lazily load ONNX session and tensor names."""
@@ -59,7 +69,10 @@ class OnnxAIModel(BaseAIModel):
         return Image.open(io.BytesIO(binary))
 
     def _preprocess(self, image: Image.Image) -> np.ndarray:
-        """Apply training-equivalent preprocess and return [1, 3, 54, 250] float32."""
+        """Apply training-equivalent preprocess and return [1, 3, H, W] float32."""
+
+        target_h = self._target_height
+        target_w = self._target_width
 
         # Normalize transparency onto a white background before RGB conversion.
         has_alpha = image.mode in {"RGBA", "LA"} or (
@@ -76,16 +89,16 @@ class OnnxAIModel(BaseAIModel):
         if original_h <= 0:
             raise ValueError("Invalid image height for preprocessing.")
 
-        ratio = TARGET_HEIGHT / float(original_h)
+        ratio = target_h / float(original_h)
         new_w = max(1, int(original_w * ratio))
-        resized = image.resize((new_w, TARGET_HEIGHT), Image.Resampling.BILINEAR)
+        resized = image.resize((new_w, target_h), Image.Resampling.BILINEAR)
 
-        if new_w < TARGET_WIDTH:
-            padded = Image.new("RGB", (TARGET_WIDTH, TARGET_HEIGHT), (255, 255, 255))
+        if new_w < target_w:
+            padded = Image.new("RGB", (target_w, target_h), (255, 255, 255))
             padded.paste(resized, (0, 0))
             processed = padded
-        elif new_w > TARGET_WIDTH:
-            processed = resized.crop((0, 0, TARGET_WIDTH, TARGET_HEIGHT))
+        elif new_w > target_w:
+            processed = resized.crop((0, 0, target_w, target_h))
         else:
             processed = resized
 
@@ -94,29 +107,47 @@ class OnnxAIModel(BaseAIModel):
         return np.expand_dims(chw, axis=0)
 
     def _decode_ctc(self, raw: np.ndarray) -> str:
-        """Decode CTC logits into text."""
+        """
+        Decode CTC logits into text.
 
-        if raw.shape[0] == 1:  # [B, T, C]
-            best_path = np.argmax(raw, axis=2)[0]
+        The ONNX model outputs shape [T, B, C] (time-first).
+        Reference: argmax over class dim (axis=2) -> [T, B], then take [:, 0] for batch 0.
+        Handles [B, T, C] (batch-first) layout as fallback if shape[0] == 1 (batch size).
+        """
+        vocab = self._vocab
+
+        if raw.ndim == 3:
+            if raw.shape[1] == 1:
+                # [T, B, C] layout — time-first export (our model: shape (63, 1, 63))
+                best_path = np.argmax(raw, axis=2)[:, 0]  # [T]
+            else:
+                # [B, T, C] layout — batch-first export
+                best_path = np.argmax(raw[0], axis=1)  # [T]
+        elif raw.ndim == 2:
+            # [T, C] — already squeezed single-batch export
+            best_path = np.argmax(raw, axis=1)
         else:
-            best_path = np.argmax(raw, axis=2)[:, 0]  # [T, B, C]
+            raise ValueError(f"Unexpected CTC output shape: {raw.shape}")
 
         prev = None
         chars: list[str] = []
         for idx in best_path:
             if idx != 0 and idx != prev:
                 char_index = int(idx) - 1
-                if 0 <= char_index < len(VOCAB):
-                    chars.append(VOCAB[char_index])
+                if 0 <= char_index < len(vocab):
+                    chars.append(vocab[char_index])
             prev = idx
         return "".join(chars)
 
+
     async def solve(self, task_type: str, payload_base64: str, mode: str) -> str:
-        """Run ONNX solve for image tasks, fallback for text/audio."""
+        """Run ONNX solve for image tasks; raise ValueError for unsupported types."""
 
         self._ensure_loaded()
         if task_type != "image":
-            return f"{task_type}-not-supported-by-onnx"
+            # Raise so the caller logs and surfaces a meaningful error, not
+            # a silent wrong answer stored in the cache.
+            raise ValueError(f"task_type '{task_type}' is not supported by the ONNX model")
 
         image = self._decode_payload_image(payload_base64)
         tensor = self._preprocess(image)

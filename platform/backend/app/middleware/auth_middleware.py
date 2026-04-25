@@ -13,6 +13,16 @@ from app.services.key_service import KeyService
 
 logger = logging.getLogger(__name__)
 
+# Paths that are intentionally exempt from API-key authentication.
+# /v1/locators — public metadata read by the extension before it has a key.
+# /v1/field-mappings/routes — sync endpoint; the extension also reads this
+#   before a key is available on first install.  Sensitive only when model
+#   mapping metadata must be kept private; document here if that changes.
+_PUBLIC_V1_PATHS = {
+    "/v1/locators",
+    "/v1/field-mappings/routes",
+}
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """Validate API keys for v1 routes."""
@@ -27,7 +37,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         path = request.url.path
         # Only apply auth to /v1 API routes
-        if not path.startswith("/v1") or path == "/v1/locators":
+        if not path.startswith("/v1") or path in _PUBLIC_V1_PATHS:
             return await call_next(request)
 
         if path in {"/v1/key/create", "/v1/key/revoke"}:
@@ -65,6 +75,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
         if not device_id:
             ua = request.headers.get("user-agent", "").strip()
+            # Use a stable fingerprint from the UA. Note: a browser update or
+            # profile change will look like a new device and lock the key.
+            # Clients should always send X-Device-ID to avoid this.
             device_id = f"ua:{ua[:180]}" if ua else "ua:unknown"
         if not self._key_service.validate_or_bind_device(
             key_id=key_id,

@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Autofill Recorder V14.1",
+  "version": "14.1",
+  "description": "Smart Playback + React Support + Profile Manager",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Autofill Controls"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "toggle-autofill": {
+      "suggested_key": { "default": "Ctrl+Shift+F" },
+      "description": "Force Run Autofill"
+    }
+  }
+}

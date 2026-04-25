@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tata-captcha Options</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #121826;
+      --fg: #e2e8f0;
+      --muted: #94a3b8;
+      --panel: rgba(255, 255, 255, 0.08);
+      --panel-border: rgba(255, 255, 255, 0.1);
+      --field: rgba(17,24,39,0.55);
+      --field-border: rgba(255, 255, 255, 0.12);
+      --btn: #6366f1;
+      --btn-hover: #4f46e5;
+      --ghost: rgba(255, 255, 255, 0.06);
+      --ghost-hover: rgba(255, 255, 255, 0.12);
+      --danger: #f43f5e;
+    }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f8fafc;
+      --fg: #0f172a;
+      --muted: #64748b;
+      --panel: rgba(255, 255, 255, 0.84);
+      --panel-border: rgba(15, 23, 42, 0.08);
+      --field: rgba(255, 255, 255, 0.9);
+      --field-border: rgba(15, 23, 42, 0.15);
+      --btn: #4f46e5;
+      --btn-hover: #4338ca;
+      --ghost: rgba(15, 23, 42, 0.06);
+      --ghost-hover: rgba(15, 23, 42, 0.12);
+      --danger: #e11d48;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--fg);
+      background: radial-gradient(circle at 10% 10%, rgba(99,102,241,0.25), transparent 30%),
+                  radial-gradient(circle at 85% 20%, rgba(6,182,212,0.18), transparent 35%),
+                  var(--bg);
+      transition: background .25s ease, color .25s ease;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--panel-border);
+      background: color-mix(in srgb, var(--bg) 75%, transparent);
+    }
+
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+    .nav-inner { height: 62px; display: flex; align-items: center; justify-content: space-between; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .2px; }
+    .brand-logo {
+      width: 30px;
+      height: 30px;
+      border-radius: 10px;
+      object-fit: cover;
+      box-shadow: 0 8px 22px rgba(99, 102, 241, 0.25);
+    }
+
+    .icon-btn {
+      border: 1px solid var(--panel-border);
+      background: var(--ghost);
+      color: var(--fg);
+      border-radius: 10px;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: .2s ease;
+    }
+    .icon-btn:hover { background: var(--ghost-hover); }
+
+    main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 28px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+    @media (min-width: 960px) {
+      .grid { grid-template-columns: 1fr 1.2fr; align-items: start; }
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 18px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 36px rgba(2, 6, 23, .18);
+      overflow: hidden;
+    }
+
+    .card-head {
+      padding: 16px;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .card-title { margin: 0; font-size: 1rem; font-weight: 700; }
+    .card-sub { margin: 4px 0 0; font-size: .78rem; color: var(--muted); }
+    .card-body { padding: 16px; }
+
+    .stack { display: grid; gap: 12px; }
+    .row { display: grid; gap: 10px; }
+    .row-2 { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    @media (min-width: 640px) {
+      .row-2 { grid-template-columns: 1fr 1fr; }
+    }
+
+    label { font-size: .72rem; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }
+    input[type="text"], input[type="url"], input[type="password"], input[type="number"], select {
+      width: 100%;
+      border-radius: 11px;
+      border: 1px solid var(--field-border);
+      background: var(--field);
+      color: var(--fg);
+      font-size: .86rem;
+      padding: 10px 12px;
+      outline: none;
+      transition: .2s ease;
+    }
+    input:focus, select:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.22); }
+
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--panel) 90%, transparent);
+    }
+    .toggle-row span { font-size: .85rem; }
+
+    .switch { position: relative; width: 38px; height: 22px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; border-radius: 20px; background: #64748b; cursor: pointer; transition: .2s ease; }
+    .slider:before { content: ""; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s ease; }
+    .switch input:checked + .slider { background: #6366f1; }
+    .switch input:checked + .slider:before { transform: translateX(16px); }
+
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      border: 1px solid transparent;
+      border-radius: 11px;
+      padding: 9px 13px;
+      font-size: .82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: .2s ease;
+    }
+    .btn-primary { color: #fff; background: var(--btn); }
+    .btn-primary:hover { background: var(--btn-hover); }
+    .btn-ghost { color: var(--fg); background: var(--ghost); border-color: var(--panel-border); }
+    .btn-ghost:hover { background: var(--ghost-hover); }
+    .btn-danger { color: #fff; background: var(--danger); border-color: var(--danger); padding: 6px 9px; font-size: .72rem; }
+
+    .status { min-height: 20px; font-size: .78rem; color: #22c55e; }
+
+    .list {
+      border: 1px solid var(--panel-border);
+      background: color-mix(in srgb, var(--field) 75%, transparent);
+      border-radius: 12px;
+      padding: 8px;
+      max-height: 210px;
+      overflow: auto;
+    }
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 10px;
+      font-size: .8rem;
+    }
+    .list-item:hover { background: color-mix(in srgb, var(--ghost) 60%, transparent); }
+
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .76rem; }
+    .muted { color: var(--muted); font-size: .75rem; }
+    .picker { min-height: 18px; font-size: .76rem; color: var(--muted); }
+
+    .split { display: flex; gap: 8px; }
+    .split > *:first-child { flex: 1; }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="container nav-inner">
+      <div class="brand">
+        <img class="brand-logo" src="../icon48.png" alt="tata-captcha logo">
+        <div>tata<span style="color:#6366f1;">captcha</span> <span style="opacity:.6; font-weight:500; font-size:.88rem;">Options</span></div>
+      </div>
+      <button id="themeToggleBtn" type="button" class="icon-btn" title="Toggle theme">
+        <span id="themeIcon" aria-hidden="true">&#9728;</span>
+      </button>
+    </div>
+  </nav>
+
+  <main>
+    <div class="grid">
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Connection</h2>
+            <p class="card-sub">Server endpoint and API key</p>
+          </div>
+          <button id="syncBtn" type="button" class="btn btn-ghost">Sync</button>
+        </div>
+        <div class="card-body stack">
+          <div class="row">
+            <label for="apiBaseUrl">Server API URL</label>
+            <input id="apiBaseUrl" type="url" placeholder="http://localhost:8080">
+          </div>
+          <div class="row">
+            <label for="apiKey">API Key</label>
+            <input id="apiKey" type="password" placeholder="sk-...">
+          </div>
+
+          <h3 class="card-title" style="font-size:.93rem; margin: 8px 0 2px;">Task Behavior</h3>
+          <div class="toggle-row"><span>Enable Image Tasks</span><label class="switch"><input type="checkbox" id="imageTaskEnabled"><span class="slider"></span></label></div>
+          <div class="toggle-row"><span>Enable Audio Tasks</span><label class="switch"><input type="checkbox" id="audioTaskEnabled"><span class="slider"></span></label></div>
+          <div class="toggle-row"><span>Enable Text Tasks</span><label class="switch"><input type="checkbox" id="textTaskEnabled"><span class="slider"></span></label></div>
+          <div class="toggle-row"><span>Auto-process when detected</span><label class="switch"><input type="checkbox" id="autoSolve"><span class="slider"></span></label></div>
+          <div class="row">
+            <label for="delayMs">Delay Timer (ms)</label>
+            <input id="delayMs" type="number" min="0" placeholder="300">
+          </div>
+
+          <div class="actions">
+            <button id="saveBtn" type="button" class="btn btn-primary">Save Settings</button>
+          </div>
+          <div id="statusLine" class="status"></div>
+        </div>
+      </section>
+
+      <section class="stack">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2 class="card-title">Disabled Hosts</h2>
+              <p class="card-sub">Ignore CAPTCHAs on selected domains</p>
+            </div>
+          </div>
+          <div class="card-body stack">
+            <div id="disabledHostsList" class="list"></div>
+            <div class="split">
+              <input id="newDisabledHost" type="text" placeholder="e.g. secure.bank.com">
+              <button id="addHostBtn" type="button" class="btn btn-ghost">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2 class="card-title">Domain Field Routes</h2>
+              <p class="card-sub">Map source selectors to target inputs per domain</p>
+            </div>
+          </div>
+          <div class="card-body stack">
+            <div id="locatorList" class="list"></div>
+
+            <div class="row-2">
+              <div class="row">
+                <label for="locDomain">Domain</label>
+                <input id="locDomain" type="text" placeholder="sarathi.parivahan.gov.in">
+              </div>
+              <div class="row">
+                <label for="locTaskType">Source Type</label>
+                <select id="locTaskType">
+                  <option value="image">image</option>
+                  <option value="audio">audio</option>
+                  <option value="text">text</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row-2">
+              <div class="row">
+                <label for="locImg">Source Selector</label>
+                <div class="split">
+                  <input id="locImg" type="text" placeholder="#capimg">
+                  <button id="pickSourceBtn" type="button" class="btn btn-ghost">Pick</button>
+                </div>
+              </div>
+              <div class="row">
+                <label for="locInput">Target Selector</label>
+                <div class="split">
+                  <input id="locInput" type="text" placeholder="#entcaptxt">
+                  <button id="pickTargetBtn" type="button" class="btn btn-ghost">Pick</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button id="addLocatorBtn" type="button" class="btn btn-primary">Add Route Map</button>
+            </div>
+            <div id="pickerStatus" class="picker">Open the website tab first, then click picker buttons.</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

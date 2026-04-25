@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import urllib.parse
 import urllib.request
@@ -12,6 +14,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Shared thread-pool executor for blocking network calls
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="alert")
+
 
 class AlertService:
     """
@@ -19,6 +24,10 @@ class AlertService:
     All config (phone, apikey, enabled) is read from the platform_settings
     DB table on every send call — changeable from the admin dashboard
     without restarting the server.
+
+    The ``send()`` method is synchronous but runs the blocking HTTP request
+    in a background thread so it is safe to call from an async context via
+    ``asyncio.get_event_loop().run_in_executor``.
 
     Setup (one-time per admin phone):
       1. Add +34 644 59 72 16 to contacts as "CallMeBot"
@@ -45,12 +54,10 @@ class AlertService:
     def _apikey(self) -> str:
         return self._db.get_setting("alerts.callmebot_apikey", "").strip()
 
-    # ── Core send ─────────────────────────────────────────────────────────────
+    # ── Core send (blocking — runs in thread pool) ────────────────────────────
 
-    def send(self, message: str) -> bool:
-        """Send a WhatsApp message. Returns True on success."""
-        if not self._enabled():
-            return False
+    def _send_blocking(self, message: str) -> bool:
+        """Blocking HTTP call — must be called from a thread, not the event loop."""
         phone  = self._phone()
         apikey = self._apikey()
         if not phone or not apikey:
@@ -72,6 +79,27 @@ class AlertService:
         except Exception as e:
             logger.warning("whatsapp_alert_failed", extra={"context": {"error": str(e)}})
             return False
+
+    def send(self, message: str) -> bool:
+        """
+        Send a WhatsApp message.  Returns True on success.
+
+        If called from within a running event loop (e.g. startup hook), the
+        blocking HTTP request is submitted to a thread-pool executor so the
+        event loop is never stalled.  If called from a plain sync context the
+        call runs inline.
+        """
+        if not self._enabled():
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running event loop — safe to call blocking code directly
+            return self._send_blocking(message)
+        else:
+            # Running inside an async context — offload to thread pool
+            loop.run_in_executor(_executor, self._send_blocking, message)
+            return True  # fire-and-forget; result logged in thread
 
     # ── Preset messages ────────────────────────────────────────────────────────
 

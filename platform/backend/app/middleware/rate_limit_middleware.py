@@ -11,6 +11,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import Settings
 
+# How often (seconds) to sweep stale buckets from the event dict.
+_BUCKET_PRUNE_INTERVAL = 120
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Rate-limit keyed by API key + IP address."""
@@ -21,6 +24,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._burst = max(0, int(settings.rate_limit.burst))
         self._window_seconds = 60
         self._events: dict[str, deque[float]] = defaultdict(deque)
+        self._last_prune: float = 0.0
+
+    def _prune_buckets(self, now: float) -> None:
+        """Remove empty or fully-expired deques to prevent memory leaks."""
+        if now - self._last_prune < _BUCKET_PRUNE_INTERVAL:
+            return
+        self._last_prune = now
+        dead = [
+            k for k, q in self._events.items()
+            if not q or (now - q[-1]) > self._window_seconds
+        ]
+        for k in dead:
+            del self._events[k]
 
     async def dispatch(self, request: Request, call_next):
         """Reject requests that exceed window quota."""
@@ -34,11 +50,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         api_key = getattr(request.state, "api_key", "anonymous")
         ip = request.client.host if request.client else "unknown"
         key_id = int(key_record.get("id")) if key_record else None
-        global_bucket = f"global:{ip}"
-        key_bucket = f"key:{api_key}:{ip}:{key_id if key_id is not None else 'unknown'}"
         now = time.time()
 
-        # Global limiter (all API traffic).
+        # Opportunistic bucket pruning (runs at most every _BUCKET_PRUNE_INTERVAL s)
+        self._prune_buckets(now)
+
+        global_bucket = f"global:{ip}"
+        key_bucket = f"key:{key_id if key_id is not None else 'anon'}:{ip}"
+
+        # Global limiter (all API traffic from this IP)
         global_queue = self._events[global_bucket]
         while global_queue and (now - global_queue[0]) > self._window_seconds:
             global_queue.popleft()
@@ -46,7 +66,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
         global_queue.append(now)
 
-        # Per-key limiter with optional DB override.
+        # Per-key limiter with optional DB override
         key_rpm = self._rpm
         key_burst = self._burst
         container = getattr(request.app.state, "container", None)
