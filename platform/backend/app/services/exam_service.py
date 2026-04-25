@@ -172,23 +172,130 @@ class ExamService:
             logger.warning("ocr_failed", extra={"context": {"error": str(e)}})
             return ""
 
-    def _db_lookup(self, question_text: str) -> dict | None:
-        if not question_text or not self._questions:
+    # ─────────────────────────────────────────────────────────────────────
+    # DB lookup helpers (mirrors the reference extension search logic)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        """Normalise text for fuzzy matching — strip whitespace + punctuation."""
+        import re
+        t = str(text or "")
+        t = re.sub(r'[\s\u200b-\u200d\ufeff\u00a0]+', '', t)
+        t = re.sub(r'[\u0964\u0965।॥,.?!:;\'"()\[\]{}<>/\\|@#$%^&*~`\-_=+]', '', t)
+        return t.lower()
+
+    @staticmethod
+    def _normalize_hindi(text: str) -> str:
+        """Extra Hindi normalisation — drop anusvara/visarga and digits."""
+        import re
+        t = ExamService._clean_text(text)
+        t = re.sub(r'[\u0901\u0902\u0903\u093d]', '', t)
+        t = re.sub(r'\d+', '', t)
+        return t
+
+    def _search_by_question(self, ocr_text: str) -> dict | None:
+        """Substring containment search on question_text field."""
+        cleaned = self._clean_text(ocr_text)
+        if len(cleaned) < 8:
             return None
-        q_lower = question_text.lower()
         best: dict | None = None
         best_score = 0
         for entry in self._questions:
-            entry_q = str(entry.get("question", "")).lower()
-            if not entry_q:
+            db_q = self._clean_text(entry.get("question_text", ""))
+            if not db_q:
                 continue
-            words = set(q_lower.split())
-            entry_words = set(entry_q.split())
-            score = len(words & entry_words)
-            if score > best_score and score >= 3:
-                best_score = score
+            shorter = cleaned if len(cleaned) < len(db_q) else db_q
+            longer  = db_q   if len(cleaned) < len(db_q) else cleaned
+            if shorter in longer and len(shorter) > best_score:
+                best_score = len(shorter)
                 best = entry
         return best
+
+    def _search_by_sign(self, sign_label: str) -> dict | None:
+        """Exact then prefix match on question_sign_label field."""
+        for entry in self._questions:
+            if entry.get("question_sign_label") == sign_label:
+                return entry
+        for entry in self._questions:
+            db_label = entry.get("question_sign_label", "")
+            if db_label and (db_label.startswith(sign_label) or sign_label.startswith(db_label)):
+                return entry
+        return None
+
+    def _search_by_options(self, ocr_option_texts: list[str]) -> dict | None:
+        """Reverse-lookup: match DB entry whose option texts best overlap OCR'd options."""
+        MIN_LEN = 4
+        NEED    = 2
+        cleaned_ocr = [self._clean_text(o) for o in ocr_option_texts]
+        best: dict | None = None
+        best_count = 0
+        for entry in self._questions:
+            db_opts = [
+                self._clean_text(entry.get(f"option_{i}", "")) for i in range(1, 5)
+            ]
+            matched = 0
+            for ocr_opt in cleaned_ocr:
+                if len(ocr_opt) < MIN_LEN:
+                    continue
+                for db_opt in db_opts:
+                    if len(db_opt) < MIN_LEN:
+                        continue
+                    s = ocr_opt if len(ocr_opt) < len(db_opt) else db_opt
+                    l = db_opt  if len(ocr_opt) < len(db_opt) else ocr_opt
+                    if s in l:
+                        matched += 1
+                        break
+            if matched >= NEED and matched > best_count:
+                best_count = matched
+                best = entry
+        return best
+
+    def _fuzzy_search(self, ocr_text: str, ocr_options: list[str]) -> dict | None:
+        """Hindi-normalised fuzzy search on question text then options."""
+        MIN_LEN = 8
+        NEED    = 2
+        norm_q = self._normalize_hindi(ocr_text)
+        if len(norm_q) >= MIN_LEN:
+            for entry in self._questions:
+                norm_db = self._normalize_hindi(entry.get("question_text", ""))
+                if not norm_db:
+                    continue
+                s = norm_q  if len(norm_q)  < len(norm_db) else norm_db
+                l = norm_db if len(norm_q)  < len(norm_db) else norm_q
+                if len(s) >= MIN_LEN and s in l:
+                    return entry
+        # Fallback: normalised option matching
+        norm_opts = [self._normalize_hindi(o) for o in ocr_options]
+        for entry in self._questions:
+            db_opts = [self._normalize_hindi(entry.get(f"option_{i}", "")) for i in range(1, 5)]
+            m = 0
+            for no in norm_opts:
+                if len(no) < 4:
+                    continue
+                for d in db_opts:
+                    if len(d) < 4:
+                        continue
+                    s = no if len(no) < len(d) else d
+                    l = d  if len(no) < len(d) else no
+                    if s in l:
+                        m += 1
+                        break
+            if m >= NEED:
+                return entry
+        return None
+
+    def _db_lookup(self, question_text: str, option_texts: list[str] | None = None) -> dict | None:
+        """Combined DB lookup: question-text → option-reverse → Hindi-fuzzy."""
+        match = self._search_by_question(question_text)
+        if match:
+            return match
+        if option_texts:
+            match = self._search_by_options(option_texts)
+            if match:
+                return match
+            match = self._fuzzy_search(question_text, option_texts)
+        return match
 
     def _sign_to_option(self, sign_label: str, option_images: list[str]) -> int | None:
         description = self._sign_labels.get(sign_label, "").lower()
@@ -211,9 +318,12 @@ class ExamService:
     # ── Layer 3: LLM Fallback ─────────────────────────────────────────────────
 
     async def _llm_solve(self, question_b64: str, option_b64s: list[str]) -> int | None:
-        endpoint = self._litellm_endpoint()
+        endpoint = self._litellm_endpoint().rstrip("/")
         if not endpoint:
             return None
+        # Auto-append /chat/completions if the endpoint is just a base URL
+        if not endpoint.endswith("/chat/completions"):
+            endpoint = endpoint + "/chat/completions"
         try:
             content = [
                 {"type": "text", "text": (
@@ -266,26 +376,43 @@ class ExamService:
         except Exception as e:
             return {"error": f"Invalid question image: {e}", "option_number": None, "method": "error", "processing_ms": 0}
 
-        # Layer 1 — Hash
+        # Layer 1 — Perceptual Hash (sign images → sign label → correct option)
         sign_label = self._match_sign_hash(q_img)
         if sign_label:
+            # First try sign label lookup in questions DB
+            sign_entry = self._search_by_sign(sign_label)
+            if sign_entry and sign_entry.get("correct_option_number"):
+                opt_num = int(sign_entry["correct_option_number"])
+                answer  = sign_entry.get(f"option_{opt_num}", self._sign_labels.get(sign_label, sign_label))
+                ms = int((time.perf_counter() - started) * 1000)
+                logger.info("exam_solved_hash_db", extra={"context": {"sign": sign_label, "option": opt_num}})
+                return {"option_number": opt_num, "answer_text": answer, "method": "hash_db", "processing_ms": ms}
+            # Fallback: match sign description against OCR'd option text
             opt_num = self._sign_to_option(sign_label, option_b64s)
             if opt_num:
                 ms = int((time.perf_counter() - started) * 1000)
                 logger.info("exam_solved_hash", extra={"context": {"sign": sign_label, "option": opt_num}})
                 return {"option_number": opt_num, "answer_text": self._sign_labels.get(sign_label, sign_label), "method": "hash", "processing_ms": ms}
 
-        # Layer 2 — OCR + DB
+        # Layer 2 — OCR + DB (question text / option text / Hindi fuzzy)
         question_text = self._ocr_text(q_img)
-        match = self._db_lookup(question_text)
-        if match and match.get("correct_option"):
-            ms = int((time.perf_counter() - started) * 1000)
-            opt_num = int(match["correct_option"])
-            answer = match.get(f"option_{opt_num}", f"Option {opt_num}")
+        option_texts  = []
+        for opt_b64 in option_b64s:
+            try:
+                opt_img = _b64_to_pil(opt_b64)
+                option_texts.append(self._ocr_text(opt_img))
+            except Exception:
+                option_texts.append("")
+
+        match = self._db_lookup(question_text, option_texts)
+        if match and match.get("correct_option_number"):  # ← correct key name
+            ms      = int((time.perf_counter() - started) * 1000)
+            opt_num = int(match["correct_option_number"])
+            answer  = match.get(f"option_{opt_num}", f"Option {opt_num}")
             logger.info("exam_solved_ocr_db", extra={"context": {"option": opt_num, "ms": ms}})
             return {"option_number": opt_num, "answer_text": answer, "method": "ocr_db", "processing_ms": ms}
 
-        # Layer 3 — LLM
+        # Layer 3 — LiteLLM multimodal fallback
         opt_num = await self._llm_solve(question_b64, option_b64s)
         ms = int((time.perf_counter() - started) * 1000)
         if opt_num:
@@ -293,5 +420,5 @@ class ExamService:
             return {"option_number": opt_num, "answer_text": f"Option {opt_num} (AI)", "method": "llm", "processing_ms": ms}
 
         ms = int((time.perf_counter() - started) * 1000)
-        logger.warning("exam_no_match", extra={"context": {"question_text": question_text[:80]}})
+        logger.warning("exam_no_match", extra={"context": {"question_text": question_text[:80] if question_text else ""}})
         return {"option_number": None, "answer_text": None, "method": "none", "processing_ms": ms}
