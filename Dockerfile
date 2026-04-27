@@ -19,11 +19,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
+# 🚀 FIX: Rename the built frontend to admin.html inside the template folder
+RUN cp /app/frontend/dist/index.html /app/backend/app/templates/admin.html
+
 # Set Python path to include backend/ so app.main works
 ENV PYTHONPATH=/app/backend
 
 # Expose port
-EXPOSE 8080
-
-# Start command
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+EX
