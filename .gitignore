@@ -41,3 +41,5 @@ venv/
 .vscode/
 *.swp
 *.bak
+node_modules/
+dist/
