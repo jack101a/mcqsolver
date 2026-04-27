@@ -19,6 +19,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
+# Link the built dashboard to the template folder
+# This fixes the TemplateNotFound: admin.html error
+RUN mkdir -p /app/backend/app/templates && \
+    cp /app/frontend/dist/index.html /app/backend/app/templates/admin.html
+
 # Set Python path to include backend/ so app.main works
 ENV PYTHONPATH=/app/backend
 
