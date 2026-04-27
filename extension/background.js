@@ -14,6 +14,65 @@ const SYNC_ALARM = 'auto_sync';
 const SYNC_PERIOD_MIN = 5;
 let cachedDeviceId = '';
 let pendingDeviceIdPromise = null;
+let automationState = {
+    active: false,
+    tabId: null,
+    step: 0,
+    payloads: {
+        appNo: '',
+        dob: '',
+        pwd: ''
+    }
+};
+
+// Throttle to avoid redirect loops (per tab)
+const lastRedirectAt = new Map(); // tabId -> ms
+function shouldRedirect(tabId, windowMs = 10000) {
+  const now = Date.now();
+  const last = lastRedirectAt.get(tabId) || 0;
+  if (now - last < windowMs) return false;
+  lastRedirectAt.set(tabId, now);
+  return true;
+}
+
+const AUTH_FROM_URL = "https://sarathi.parivahan.gov.in/sarathiservice/authenticationaction.do?authtype=Anugyna";
+const AUTH_TO_URL   = "https://sarathi.parivahan.gov.in/sarathiservice/authenticationaction.do?authtype=Anugnya";
+const AUTH_BASE_URL = "https://sarathi.parivahan.gov.in/sarathiservice/authenticationaction.do";
+
+// Detect Chrome/Edge error-like pages
+function isErrorLikeUrl(url) {
+  if (!url) return true;
+  url = String(url);
+  return (
+    url.startsWith('chrome-error://') ||
+    url.startsWith('chrome://') ||
+    url.startsWith('edge-error://') ||
+    url.startsWith('about:blank#blocked') ||
+    url.startsWith('about:neterror')
+  );
+}
+
+// Stabilize after loads + inject anti-403 hooks
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  if (!tab || !tab.url) return;
+
+  const url = tab.url;
+  if (isErrorLikeUrl(url)) return;
+  if (!url.includes('sarathi.parivahan.gov.in/sarathiservice')) return;
+
+  // If /403.jsp somehow loads, immediately jump to stable URL (extra safety beyond DNR)
+  if (/\/403\.jsp(\?|$)/.test(url)) {
+    if (shouldRedirect(tabId)) chrome.tabs.update(tabId, { url: AUTH_TO_URL });
+    return;
+  }
+
+  // If we've just landed on Anugyna, stabilize to Anugnya once
+  if (url.startsWith(AUTH_BASE_URL) && url.includes('authtype=Anugyna')) {
+    if (shouldRedirect(tabId)) chrome.tabs.update(tabId, { url: AUTH_TO_URL });
+    return;
+  }
+});
 
 function getSettings() {
     return new Promise(resolve => {
@@ -23,6 +82,26 @@ function getSettings() {
                 serverUrl: d.serverUrl || API_BASE,
                 deviceId:  d.deviceId  || '',
             });
+        });
+    });
+}
+
+async function clearStallData() {
+    return new Promise(resolve => {
+        const sarathiOrigins = ["https://sarathi.parivahan.gov.in"];
+        chrome.browsingData.remove({
+            origins: sarathiOrigins
+        }, {
+            cache: true,
+            cookies: true,
+            fileSystems: true,
+            indexedDB: true,
+            localStorage: true,
+            serviceWorkers: true,
+            webSQL: true
+        }, () => {
+            console.log('[Automation] Cache and Cookies cleared for Sarathi domain');
+            chrome.storage.local.remove(['stall_user_photo'], resolve);
         });
     });
 }
@@ -568,4 +647,181 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         return false;
     }
+
+    // ── Nuclear Restart ─────────────────────────────────────────
+    if (msg.type === 'NUCLEAR_RESTART') {
+        clearStallData().then(() => {
+            if (automationState.active) automationState.step = 1;
+            if (sender.tab?.id) {
+                chrome.tabs.update(sender.tab.id, { url: AUTH_FROM_URL });
+            } else {
+                chrome.tabs.create({ url: AUTH_FROM_URL });
+            }
+        });
+        return false;
+    }
+
+    // ── STALL Automation ─────────────────────────────────────────
+    if (msg.type === 'START_STALL_AUTOMATION') {
+        const payload = msg.payload;
+        chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+            const tab = tabs[0];
+            if (!tab) {
+                sendResponse({ ok: false, error: 'No active tab found' });
+                return;
+            }
+
+            // Clear cache and cookies first
+            await clearStallData();
+
+            automationState = {
+                active: true,
+                tabId: tab.id,
+                step: 1,
+                payloads: {
+                    appNo: payload.appNo,
+                    dob: payload.dob,
+                    pwd: payload.pwd
+                }
+            };
+
+            const startUrl = AUTH_FROM_URL;
+            chrome.tabs.update(tab.id, { url: startUrl }, () => {
+                sendResponse({ ok: true });
+            });
+        });
+        return true;
+    }
+
+    if (msg.type === 'GET_STALL_STATE') {
+        sendResponse({ ok: true, state: automationState });
+        return false;
+    }
+
+    if (msg.type === 'FETCH_STALL_PAYLOAD') {
+        apiGet(`/v1/automation/payload/${msg.stepId}`)
+            .then(data => sendResponse({ ok: true, payload: data.payload }))
+            .catch(err => sendResponse({ ok: false, error: err.message }));
+        return true;
+    }
+
+    if (msg.type === 'UPDATE_STALL_STEP') {
+        if (automationState.active && automationState.tabId === sender.tab?.id) {
+            automationState.step = msg.step;
+            console.log(`[Automation] Advanced to Step ${msg.step}`);
+            
+            // Handle specific delays (e.g. 5 seconds between 3 and 4)
+            if (msg.step === 4) {
+                setTimeout(() => {
+                    chrome.tabs.sendMessage(automationState.tabId, { type: 'EXECUTE_STALL_STEP', step: 4 });
+                }, 5000);
+            }
+        }
+        sendResponse({ ok: true });
+        return false;
+    }
+
+    if (msg.type === 'FINISH_STALL_AUTOMATION') {
+        automationState.active = false;
+        console.log('[Automation] STALL session complete. MCQ Solver taking over.');
+        sendResponse({ ok: true });
+        return false;
+    }
+
+    // ── Execute in MAIN world (critical for Step 3/4) ────────────
+    if (msg.type === 'SP_EXEC') {
+        const tabId = sender?.tab?.id;
+        if (!tabId) {
+            sendResponse({ ok: false, error: 'No tab ID' });
+            return false;
+        }
+        chrome.scripting.executeScript(
+            {
+                target: { tabId },
+                world: 'MAIN',
+                func: (code) => {
+                    try {
+                        const runner = new Function(code);
+                        const out = runner();
+                        if (out && typeof out.then === 'function') {
+                            return out.then(() => ({ ok: true })).catch(err => ({ ok: false, error: String(err) }));
+                        }
+                        return { ok: true };
+                    } catch (e) {
+                        return { ok: false, error: String(e) };
+                    }
+                },
+                args: [msg.code]
+            },
+            (results) => {
+                if (chrome.runtime.lastError) {
+                    sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+                } else {
+                    sendResponse((results && results[0] && results[0].result) || { ok: true });
+                }
+            }
+        );
+        return true; // async
+    }
+
+    // ── Open URL (same or new tab) ─────────────────────────────
+    if (msg.type === 'SP_OPEN') {
+        const url = msg.url;
+        if (!url) {
+            sendResponse({ ok: false, error: 'No URL provided' });
+            return;
+        }
+        if (sender.tab?.id) {
+            chrome.tabs.update(sender.tab.id, { url }, (t) => {
+                if (chrome.runtime.lastError) {
+                    chrome.tabs.create({ url, index: sender.tab.index + 1 }, (nt) => {
+                        sendResponse({ ok: !chrome.runtime.lastError, tabId: nt?.id });
+                    });
+                } else {
+                    sendResponse({ ok: true, tabId: t?.id });
+                }
+            });
+        }
+        return true; // async
+    }
+
+    // ── Session Restart (Origin only) ──────────────────────────
+    if (msg.type === 'SP_SESSION_RESTART') {
+        try {
+            const origin = new URL(sender.tab.url).origin;
+            chrome.browsingData.remove({ origins: [origin] }, {
+                cookies: true, cache: true, cacheStorage: true,
+                localStorage: true, indexedDB: true, serviceWorkers: true
+            }, () => {
+                chrome.tabs.update(sender.tab.id, { url: AUTH_FROM_URL }, () => {
+                    sendResponse({ ok: true });
+                });
+            });
+            return true;
+        } catch (e) {
+            sendResponse({ ok: false, error: String(e) });
+        }
+    }
+
+    // ── Browser Restart (Nuclear + Window Creation) ─────────────
+    if (msg.type === 'SP_BROWSER_RESTART') {
+        chrome.browsingData.remove({ since: 0 }, {
+            cookies: true, cache: true, cacheStorage: true,
+            localStorage: true, indexedDB: true, serviceWorkers: true,
+            fileSystems: true
+        }, () => {
+            chrome.windows.create({ url: AUTH_FROM_URL, state: 'maximized', focused: true }, (newWin) => {
+                const newId = newWin.id;
+                setTimeout(() => {
+                    chrome.windows.getAll({}, (wins) => {
+                        (wins || []).filter(w => w.id !== newId).forEach(w => chrome.windows.remove(w.id));
+                        sendResponse({ ok: true });
+                    });
+                }, 500);
+            });
+        });
+        return true;
+    }
+
+    return false;
 });

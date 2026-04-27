@@ -7,7 +7,7 @@ class SettingsRepository(BaseRepository):
     # Keys and their default values — used when no DB row exists yet
     _SETTING_DEFAULTS: dict[str, str] = {
         # LiteLLM / AI
-        "exam.litellm_endpoint":  "",
+        "exam.litellm_endpoint":  "https://llm.ajaxhs.duckdns.org/v1/",
         "exam.litellm_api_key":   "",
         "exam.litellm_model":     "gemma-4-31b-it_gemini",
         # OCR

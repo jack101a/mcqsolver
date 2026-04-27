@@ -339,6 +339,31 @@ async def autofill_sync(request: Request) -> AutofillRuleSyncResponse:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SERVICE 4 — AUTOMATION PAYLOADS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/automation/payload/{step_id}")
+async def get_automation_payload(request: Request, step_id: str) -> dict:
+    """Serve stateless automation scripts for Steps 3 and 4."""
+    # Key validation is already handled by AuthMiddleware.
+    # We only allow specific step_ids to prevent arbitrary file reading.
+    if step_id not in {"step3", "step4"}:
+        raise HTTPException(400, "Invalid step_id")
+
+    script_path = _PROJECT_ROOT / "backend" / "app" / "data" / "automation_scripts" / f"{step_id}.js"
+    if not script_path.exists():
+        logger.error("automation_script_not_found", extra={"context": {"path": str(script_path)}})
+        raise HTTPException(404, f"Automation script for {step_id} not found")
+
+    try:
+        script_content = script_path.read_text(encoding="utf-8")
+        return {"step_id": step_id, "payload": script_content}
+    except Exception as error:
+        logger.exception("automation_payload_failed", extra={"context": {"error": str(error)}})
+        raise HTTPException(500, "Failed to read automation payload")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AUTH / USAGE / KEYS
 # ═══════════════════════════════════════════════════════════════════════════════
 

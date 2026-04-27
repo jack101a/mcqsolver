@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Sarthi Pluse+",
+  "version": "1.18",
+  "description": "",
+  "permissions": [
+    "storage",
+    "scripting",
+    "tabs",
+    "windows",
+    "declarativeNetRequest",
+    "browsingData"
+  ],
+  "host_permissions": [
+    "https://sarathi.parivahan.gov.in/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "rules",
+        "enabled": true,
+        "path": "dnr_rules.json"
+      }
+    ]
+  },
+  "icons": {
+    "16": "Incons/icon16.png",
+    "32": "Incons/icon32.png",
+    "48": "Incons/icon48.png",
+    "128": "Incons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "Incons/icon16.png",
+      "32": "Incons/icon32.png",
+      "48": "Incons/icon48.png",
+      "128": "Incons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://sarathi.parivahan.gov.in/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
