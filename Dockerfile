@@ -9,8 +9,8 @@ RUN npm run build
 # Stage 2: Final Image
 FROM python:3.11-bookworm
 
-# Install system dependencies
 ENV DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update || (sleep 5 && apt-get update) && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-hin \
@@ -22,22 +22,18 @@ RUN apt-get update || (sleep 5 && apt-get update) && apt-get install -y \
 
 WORKDIR /app
 
-# Copy requirements and install
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
-COPY . .
-
-# Copy built frontend from Stage 1
+# Copy application files
+COPY backend/ /app/backend/
 COPY --from=frontend-builder /frontend/dist /app/frontend/dist
 
 # Link the built dashboard to the template folder
-# This fixes the TemplateNotFound: admin.html error when React build is not preferred
 RUN mkdir -p /app/backend/app/templates && \
     cp /app/frontend/dist/index.html /app/backend/app/templates/admin.html
 
-# Set Python path to include backend/ so app.main works
+# Environment variables
 ENV PYTHONPATH=/app/backend
 EXPOSE 8080
 
