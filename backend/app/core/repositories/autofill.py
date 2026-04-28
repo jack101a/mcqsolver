@@ -188,7 +188,6 @@ class AutofillRepository(BaseRepository):
                         INSERT INTO autofill_rule_proposals 
                             (idempotency_key, device_id, api_key_id, status, submitted_at, rule_json, approved_rule_id, reviewed_at, created_at)
                         VALUES (?, ?, ?, 'approved', ?, ?, ?, ?, ?)
-                        ON CONFLICT(approved_rule_id) DO NOTHING
                         """,
                         ("imported_" + approved_id, "imported", 0, now, rule_json, approved_id, now, now),
                     )
