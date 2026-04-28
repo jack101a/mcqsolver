@@ -1,8 +1,33 @@
 'use strict';
 
-const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'profiles', 'activeProfileId', 'isRecording'];
+const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'profiles', 'activeProfileId', 'isRecording', 'stallStepScripts'];
 
 function el(id) { return document.getElementById(id); }
+
+function readFileText(file) {
+    if (!file) return Promise.resolve('');
+    return file.text().catch(() => '');
+}
+
+function syncFileLabel(inputId, labelId) {
+    const input = el(inputId);
+    const label = el(labelId);
+    if (!input || !label) return;
+    input.addEventListener('change', () => {
+        const file = input.files && input.files[0];
+        label.textContent = file ? file.name : 'No file selected';
+    });
+}
+
+async function collectStallScripts(prefix) {
+    // Step 3 & 4 removed from popup UI; return empty scripts
+    return {
+        step3Code: '',
+        step4Code: '',
+        step3FileName: '',
+        step4FileName: ''
+    };
+}
 
 // --- View Management ---
 function showView(viewId) {
@@ -64,6 +89,7 @@ async function handleLogin() {
                 chrome.runtime.sendMessage({ type: 'SYNC_NOW' });
             });
             initApp();
+
         } else {
             errNode.textContent = resp?.error || 'Verification failed. Check key/URL.';
             errNode.style.color = 'var(--danger)';
@@ -171,6 +197,7 @@ function setupMasterUI(data) {
 // --- Event Listeners ---
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
+                
 
     // Auth
     el('btn-auth-submit').addEventListener('click', handleLogin);
@@ -211,57 +238,23 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.runtime.openOptionsPage();
     });
 
-    // --- STALL Exam Suite Logic ---
-    const toggleStallForm = (prefix) => {
-        const form = el(`${prefix}stall-form`);
-        const btn = el(`${prefix}btn-stall-start`);
-        if (form.style.display === 'none') {
-            form.style.display = 'flex';
-            btn.textContent = '✖ Cancel Setup';
-            btn.style.background = 'var(--panel)';
-        } else {
-            form.style.display = 'none';
-            btn.textContent = '🚀 Start STALL';
-            btn.style.background = 'linear-gradient(135deg, var(--accent), var(--primary))';
-        }
-    };
-
-    el('btn-stall-start').addEventListener('click', () => toggleStallForm(''));
-    const masterStartBtn = el('master-btn-stall-start');
-    if (masterStartBtn) masterStartBtn.addEventListener('click', () => toggleStallForm('master-'));
-
-    const beginStallSession = (prefix) => {
-        const appNo = el(`${prefix}stall-app-no`).value.trim();
-        const dob = el(`${prefix}stall-dob`).value.trim();
-        const pwd = el(`${prefix}stall-pwd`).value.trim();
-        const status = el('stall-status');
-
-        if (!appNo || !dob || !pwd) {
-            if (status) status.textContent = 'Please fill all fields.';
-            return;
-        }
-
-        if (status) {
-            status.textContent = 'Initiating automated session...';
-            status.style.color = 'var(--success)';
-        }
-
-        chrome.runtime.sendMessage({ 
-            type: 'START_STALL_AUTOMATION', 
-            payload: { appNo, dob, pwd } 
+    const handleStallStart = async () => {
+        chrome.runtime.sendMessage({
+            type: 'START_STALL_AUTOMATION',
+            payload: {} // Semi-automatic mode: no credentials needed from popup
         }, (resp) => {
             if (resp?.ok) {
-                setTimeout(() => window.close(), 1000);
-            } else if (status) {
-                status.textContent = resp?.error || 'Failed to start automation.';
-                status.style.color = 'var(--danger)';
+                window.close();
+            } else {
+                alert(resp?.error || 'Failed to start session.');
             }
         });
     };
 
-    el('btn-stall-begin').addEventListener('click', () => beginStallSession(''));
-    const masterBeginBtn = el('master-btn-stall-begin');
-    if (masterBeginBtn) masterBeginBtn.addEventListener('click', () => beginStallSession('master-'));
+    el('btn-stall-start').addEventListener('click', handleStallStart);
+    const masterStartBtn = el('master-btn-stall-start');
+    if (masterStartBtn) masterStartBtn.addEventListener('click', handleStallStart);
+
 
     // --- Route Locator Logic ---
     function startLocate(targetField) {

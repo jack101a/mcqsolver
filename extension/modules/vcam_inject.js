@@ -1,3 +1,4 @@
+
 // extension/modules/vcam_inject.js
 // This script runs in the page context (MAIN world) to shim navigator.mediaDevices.getUserMedia.
 // It allows us to stream custom images/video into the site's webcam feeds.
@@ -14,6 +15,7 @@
     let VCAM_FPS = 15;
     let CURRENT_IMAGE = '';
     let ZOOM = 1.3;
+    let FORCE_ALL = true;
 
     // Create a hidden canvas to draw our frames
     const canvas = document.createElement('canvas');
@@ -38,12 +40,12 @@
                 const scale = (ch / ih) * Math.max(0.25, Math.min(4, ZOOM));
                 const dw = Math.max(1, Math.floor(iw * scale));
                 const dh = ch;
-                
+
                 if (canvas.width !== dw) {
                     canvas.width = dw;
                     ctx = canvas.getContext('2d', { alpha: true });
                 }
-                
+
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = 'high';
                 ctx.drawImage(img, 0, 0, dw, dh);
@@ -127,21 +129,18 @@
     const _gum = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
     if (_gum) {
         navigator.mediaDevices.getUserMedia = function (constraints) {
-            // If VCAM is enabled and requested (or if we force it)
             const v = constraints && constraints.video;
             const isRequested = v && (typeof v === 'object') && (v.deviceId === VCAM_ID || (v.deviceId && v.deviceId.exact === VCAM_ID));
-            
-            if (VCAM_ENABLED && (isRequested || (v && !v.deviceId))) {
+
+            if (VCAM_ENABLED && (FORCE_ALL || isRequested || (v && !v.deviceId))) {
                 console.log('[VCAM] Providing virtual stream (Total Merge Shim)');
-                
-                // Match requested resolution
+
                 const dims = pickDimsFrom(constraints);
                 if (dims.w) canvas.width = dims.w;
                 if (dims.h) canvas.height = dims.h;
 
                 const s = getVcamStream();
-                
-                // Total Merge: Add silent audio if requested to prevent hardware errors
+
                 if (constraints.audio) {
                     const at = ensureSilentAudioTrack();
                     if (at) s.addTrack(at);
@@ -159,11 +158,35 @@
         if (d.__sp_vcam_state === true) {
             VCAM_ENABLED = !!d.enabled;
             VCAM_FPS = Number(d.fps || 15);
+            if (typeof d.zoom === 'number' && isFinite(d.zoom)) {
+                ZOOM = Math.max(0.25, Math.min(4, d.zoom));
+            }
+            if (typeof d.force === 'boolean') {
+                FORCE_ALL = !!d.force;
+            } else if (typeof d.forceAll === 'boolean') {
+                FORCE_ALL = !!d.forceAll;
+            }
             if (typeof d.image === 'string' && d.image.startsWith('data:image/')) {
                 CURRENT_IMAGE = d.image;
             }
             if (stream) startLoop(); else if (VCAM_ENABLED) getVcamStream();
-            console.log('[VCAM] State updated:', { VCAM_ENABLED, VCAM_FPS });
+            console.log('[VCAM] State updated:', { VCAM_ENABLED, VCAM_FPS, ZOOM, FORCE_ALL });
+        } else if (d.__sp_vcam_toggle) {
+            VCAM_ENABLED = !!d.enabled;
+            if (stream) startLoop(); else if (VCAM_ENABLED) getVcamStream();
+        } else if (d.__sp_vcam_force) {
+            FORCE_ALL = !!d.forceAll;
+        } else if (d.__sp_vcam_frame) {
+            if (typeof d.dataUrl === 'string' && d.dataUrl.startsWith('data:image/')) {
+                CURRENT_IMAGE = d.dataUrl;
+                if (stream) draw();
+            }
+        } else if (d.__sp_vcam_zoom) {
+            const z = Number(d.zoom);
+            if (isFinite(z)) {
+                ZOOM = Math.max(0.25, Math.min(4, z));
+                if (stream) draw();
+            }
         }
     }, false);
 

@@ -24,6 +24,12 @@ export function SettingsPanel({
   handleRestoreLatestBackup,
   handleExportMasterSetup,
   handleImportMasterSetup,
+  handleExportAutofill,
+  handleImportAutofill,
+  handleExportCaptcha,
+  handleImportCaptcha,
+  handleExportFullBackup,
+  handleImportFullBackup,
   handleCloudBackupPush,
   handleCloudBackupPull,
   t_textHeading,
@@ -253,10 +259,24 @@ export function SettingsPanel({
       {/* Backups Section */}
       <div className={`rounded-2xl p-6 transition-colors duration-500 ${glassPanel}`}>
         <h3 className={`text-base font-semibold mb-4 ${t_textHeading}`}>Data Resilience</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <button type="button" onClick={handleCreateBackupNow} className={glassButton}>Create Backup</button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <button type="button" onClick={handleCreateBackupNow} className={glassButton}>Create DB Snap</button>
           <button type="button" onClick={handleRestoreLatestBackup} className={glassButton}>Restore Latest</button>
-          <button type="button" onClick={handleExportMasterSetup} className={glassButton}>JSON Export</button>
+          <button type="button" onClick={handleExportFullBackup} className={glassButton}>ZIP Master (+Models)</button>
+          <form onSubmit={handleImportFullBackup} className="flex gap-2">
+            <input type="file" name="backup_file" accept=".zip" required className="hidden" id="full-zip-input" onChange={(e) => e.target.form.requestSubmit()} />
+            <label htmlFor="full-zip-input" className={`cursor-pointer ${glassButton} w-full`}>Import Master ZIP</label>
+          </form>
+          <button type="button" onClick={handleExportAutofill} className={glassButton}>Export Autofill</button>
+          <form onSubmit={handleImportAutofill} className="flex gap-2">
+            <input type="file" name="rules_file" accept=".json" required className="hidden" id="autofill-json-input" onChange={(e) => e.target.form.requestSubmit()} />
+            <label htmlFor="autofill-json-input" className={`cursor-pointer ${glassButton} w-full`}>Import Autofill</label>
+          </form>
+          <button type="button" onClick={handleExportCaptcha} className={glassButton}>Export Captcha</button>
+          <form onSubmit={handleImportCaptcha} className="flex gap-2">
+            <input type="file" name="captcha_file" accept=".json" required className="hidden" id="captcha-json-input" onChange={(e) => e.target.form.requestSubmit()} />
+            <label htmlFor="captcha-json-input" className={`cursor-pointer ${glassButton} w-full`}>Import Captcha</label>
+          </form>
           <button type="button" disabled={!cloudBackupConfigured} onClick={handleCloudBackupPush} className={`${glassButton} ${!cloudBackupConfigured ? "opacity-40" : ""}`}>Push Cloud</button>
           <button type="button" disabled={!cloudBackupConfigured} onClick={handleCloudBackupPull} className={`${glassButton} ${!cloudBackupConfigured ? "opacity-40" : ""}`}>Pull Cloud</button>
         </div>

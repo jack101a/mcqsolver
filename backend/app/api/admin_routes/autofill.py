@@ -130,3 +130,32 @@ async def delete_autofill_proposal(request: Request, proposal_id: int) -> JSONRe
     if not deleted:
         raise HTTPException(404, detail="Proposal not found")
     return JSONResponse({"ok": True})
+
+
+@router.get("/api/autofill/export")
+async def export_autofill_rules(request: Request) -> JSONResponse:
+    """Export all approved autofill rules as JSON."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    rules = container.db.autofill.get_approved_autofill_rules()
+    return JSONResponse({"rules": rules})
+
+
+@router.post("/api/autofill/import")
+async def import_autofill_rules(request: Request) -> JSONResponse:
+    """Import autofill rules from a JSON file."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    try:
+        body = await request.json()
+        rules = body.get("rules", [])
+        if not isinstance(rules, list):
+            raise ValueError("Expected 'rules' list in JSON body")
+        count = container.db.autofill.bulk_import_approved_rules(rules)
+        return JSONResponse({"ok": True, "imported": count})
+    except Exception as e:
+        raise HTTPException(400, detail=str(e))

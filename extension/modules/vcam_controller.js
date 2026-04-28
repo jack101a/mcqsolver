@@ -1,3 +1,4 @@
+
 // extension/modules/vcam_controller.js
 // This module bridges the extension world and the MAIN world (vcam_inject.js).
 (function () {
@@ -7,7 +8,9 @@
         state: {
             enabled: true,
             image: '',
-            fps: 15
+            fps: 15,
+            zoom: 1.3,
+            force: true
         },
 
         init() {
@@ -15,8 +18,32 @@
             // Listen for storage changes
             chrome.storage.onChanged.addListener(async (changes, area) => {
                 if (area !== 'local') return;
+
+                if (changes.vcamEnabled || changes.sp_vcam_enabled) {
+                    this.state.enabled = (changes.vcamEnabled ? changes.vcamEnabled.newValue : changes.sp_vcam_enabled.newValue) !== false;
+                    this.pushToPage();
+                }
+
+                if (changes.sp_vcam_zoom) {
+                    const z = Number(changes.sp_vcam_zoom.newValue);
+                    if (isFinite(z)) this.state.zoom = z;
+                    this.pushToPage();
+                }
+
+                if (changes.sp_vcam_force_all) {
+                    this.state.force = changes.sp_vcam_force_all.newValue !== false;
+                    this.pushToPage();
+                }
+
+                if (changes.sp_vcam_image) {
+                    const du = changes.sp_vcam_image.newValue || '';
+                    this.state.image = du;
+                    this.pushToPage();
+                }
+
                 if (changes.stall_user_photo) {
                     const du = changes.stall_user_photo.newValue || '';
+                    // Main detector images still get the original beautify pipeline.
                     const processed = await this.applyFilters(du);
                     this.state.image = processed;
                     this.pushToPage();
@@ -26,17 +53,33 @@
         },
 
         async syncFromStorage() {
-            const data = await window.up_getStorage(['stall_user_photo', 'vcamEnabled']);
-            this.state.enabled = data.vcamEnabled !== false;
-            const processed = await this.applyFilters(data.stall_user_photo || '');
-            this.state.image = processed;
+            const data = await window.up_getStorage([
+                'stall_user_photo',
+                'sp_vcam_image',
+                'vcamEnabled',
+                'sp_vcam_enabled',
+                'sp_vcam_zoom',
+                'sp_vcam_force_all'
+            ]);
+
+            this.state.enabled = (data.vcamEnabled ?? data.sp_vcam_enabled) !== false;
+            this.state.zoom = (typeof data.sp_vcam_zoom === 'number' && isFinite(data.sp_vcam_zoom)) ? data.sp_vcam_zoom : 1.3;
+            this.state.force = data.sp_vcam_force_all !== false;
+
+            if (typeof data.sp_vcam_image === 'string' && data.sp_vcam_image.startsWith('data:image/')) {
+                this.state.image = data.sp_vcam_image;
+            } else {
+                const processed = await this.applyFilters(data.stall_user_photo || '');
+                this.state.image = processed;
+            }
+
             this.pushToPage();
         },
 
         // Sarthi Pinel+ logic: Apply brightness/contrast to improve recognition
         async applyFilters(inputDu) {
             if (!inputDu || !inputDu.startsWith('data:image/')) return inputDu;
-            
+
             return new Promise((resolve) => {
                 const def = { bri: 1.1, con: 1.1, sat: 1.1, hue: 0, qual: 0.92 }; // Optimal defaults
                 const img = new Image();
@@ -68,7 +111,9 @@
                     __sp_vcam_state: true,
                     enabled: !!this.state.enabled,
                     image: String(this.state.image || ''),
-                    fps: Number(this.state.fps || 15)
+                    fps: Number(this.state.fps || 15),
+                    zoom: Number(this.state.zoom || 1.3),
+                    force: !!this.state.force
                 }, '*');
             } catch (e) {}
         }

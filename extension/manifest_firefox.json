@@ -1,49 +1,91 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Unified Platform",
-  "version": "2.0.0",
-  "description": "Text Captcha · MCQ Exam Solver · Autofill — All-in-one browser assistant",
-
+  "version": "2.2.0",
+  "description": "Text Captcha · MCQ Exam Solver · Autofill V26 — All-in-one browser assistant",
   "permissions": [
     "activeTab",
     "storage",
+    "unlimitedStorage",
     "tabs",
     "downloads",
-    "<all_urls>"
+    "scripting",
+    "alarms",
+    "browsingData",
+    "declarativeNetRequest"
   ],
-
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "background": {
-    "scripts": ["background.js"],
-    "persistent": false
+    "service_worker": "background.js"
   },
-
   "content_scripts": [
     {
-      "matches": ["https://*/*", "http://*/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://sarathi.parivahan.gov.in/*"
+      ],
+      "js": [
+        "modules/main_inject.js",
+        "modules/vcam_inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "modules/shared_utils.js",
+        "modules/sarathi_harden.js",
+        "modules/captcha.js",
+        "modules/exam.js",
+        "modules/autofill.js",
+        "modules/stall_automation.js",
+        "modules/vcam_controller.js",
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://sarathi.parivahan.gov.in/*"
+      ],
+      "js": [
+        "modules/sarathi_panel.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }
   ],
-
-  "browser_action": {
+  "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {
-      "48":  "icons/icon48.png",
+      "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
   },
-
-  "options_ui": {
-    "page": "options/options.html",
-    "open_in_tab": true
-  },
-
+  "options_page": "options/options.html",
   "icons": {
-    "48":  "icons/icon48.png",
+    "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "locator_picker.js"
+      ],
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ]
+    }
+  ],
   "browser_specific_settings": {
     "gecko": {
       "id": "unified-platform@extension",

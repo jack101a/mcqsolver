@@ -2,10 +2,13 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.error
+import zipfile
+import io
+import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Form, File, UploadFile, HTTPException, Response
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from .utils import _admin_guard, _write_auto_backup, _wants_json
 
 router = APIRouter(tags=["admin-backups"])
@@ -166,3 +169,73 @@ async def import_master_setup(
     if _wants_json(request):
         return JSONResponse(status_code=200, content={"ok": True, "message": "Master setup imported"})
     return RedirectResponse(url="/admin/?test_status=ok&test_message=Master+setup+imported", status_code=303)
+
+
+@router.get("/export/master-backup.zip")
+async def export_master_backup_zip(request: Request):
+    """Export a full ZIP containing master-setup.json AND the models directory."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    
+    # 1. Generate the JSON setup
+    payload = container.db.export_master_setup()
+    
+    # 2. Create ZIP in memory
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Add the JSON
+        zf.writestr("master-setup.json", json.dumps(payload, indent=2))
+        
+        # Add the models directory
+        models_dir = (_PROJECT_ROOT / "backend" / "models").resolve()
+        if models_dir.exists():
+            for file in models_dir.glob("*.onnx"):
+                zf.write(file, arcname=f"models/{file.name}")
+                
+    buf.seek(0)
+    filename = f"master-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.post("/import/master-backup.zip")
+async def import_master_backup_zip(
+    request: Request,
+    backup_file: UploadFile = File(...),
+):
+    """Import a full ZIP backup. Extracts models and imports JSON setup."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    
+    try:
+        raw = await backup_file.read()
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            # 1. Check for master-setup.json
+            if "master-setup.json" not in zf.namelist():
+                raise ValueError("master-setup.json not found in ZIP")
+            
+            # 2. Extract models
+            models_dir = (_PROJECT_ROOT / "backend" / "models").resolve()
+            models_dir.mkdir(parents=True, exist_ok=True)
+            for name in zf.namelist():
+                if name.startswith("models/") and name.endswith(".onnx"):
+                    filename = Path(name).name
+                    with zf.open(name) as source, (models_dir / filename).open("wb") as target:
+                        shutil.copyfileobj(source, target)
+            
+            # 3. Import JSON setup
+            payload_raw = zf.read("master-setup.json")
+            payload = json.loads(payload_raw.decode("utf-8"))
+            container.db.import_master_setup(payload)
+            
+        _write_auto_backup(container, "import_master_backup_zip")
+        return JSONResponse({"ok": True, "message": "Full master backup imported (including models)"})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to import ZIP backup: {exc}")

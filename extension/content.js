@@ -1,3 +1,22 @@
+
+// ===== NON-BREAKING PATCH: popup suppression =====
+(function(){
+  try {
+    // Suppress blocking dialogs
+    window.alert = function(){};
+    window.confirm = function(){ return true; };
+    window.onbeforeunload = null;
+
+    // ESC fallback (close modals/alerts on some sites)
+    setInterval(function(){
+      try {
+        document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+      } catch(e) {}
+    }, 2000);
+  } catch(e) { console.error('non-breaking patch error', e); }
+})();
+
+
 // content.js — Unified Platform Extension (V2.2)
 // Slim bootloader for modularized content script.
 // Modules: shared_utils.js, sarathi_harden.js, captcha.js, exam.js, autofill.js, stall_automation.js
@@ -26,7 +45,8 @@
         if (window.AutofillModule && data.autofillEnabled !== false) window.AutofillModule.activate();
 
         // 3. Start automation monitor
-        if (window.StallAutomation) window.StallAutomation.run();
+        if (window.StallAutomation && typeof window.StallAutomation.start === 'function') window.StallAutomation.start();
+        else if (window.StallAutomation) window.StallAutomation.run();
 
         // 4. Listen for control messages
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -40,13 +60,14 @@
                 console.log('[Content] Routes updated by background sync — applying immediately');
                 if (window.CaptchaModule.resetCache) window.CaptchaModule.resetCache();
             }
-            
+
             // Step 4 remote trigger (orchestrated by background.js)
             if (msg.type === 'EXECUTE_STALL_STEP' && msg.step === 4 && window.StallAutomation) {
                 window.StallAutomation.executePayload('step4').then(() => {
                     chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 5 });
                 });
             }
+            
         });
 
         console.log('[Content] Boot complete.');

@@ -138,11 +138,80 @@ export function useSettingsHandlers({
     } catch (error) { showToast(error.message || "Import failed", "error"); }
   };
 
+  const handleExportAutofill = () => window.location.assign("/admin/api/autofill/export");
+  
+  const handleImportAutofill = async (e) => {
+    e.preventDefault();
+    try {
+      const file = new FormData(e.target).get("rules_file");
+      if (!file) return;
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const resp = await fetch("/admin/api/autofill/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include"
+      });
+      if (!resp.ok) throw new Error("Import failed");
+      const body = await resp.json();
+      showToast(`Imported ${body.imported} autofill rules.`);
+      await fetchBootstrap();
+      e.target.reset();
+    } catch (err) { showToast(err.message, "error"); }
+  };
+
+  const handleExportCaptcha = () => window.location.assign("/admin/api/captcha/export");
+
+  const handleImportCaptcha = async (e) => {
+    e.preventDefault();
+    try {
+      const file = new FormData(e.target).get("captcha_file");
+      if (!file) return;
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const resp = await fetch("/admin/api/captcha/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include"
+      });
+      if (!resp.ok) throw new Error("Import failed");
+      showToast("Captcha config imported.");
+      await fetchBootstrap();
+      e.target.reset();
+    } catch (err) { showToast(err.message, "error"); }
+  };
+
+  const handleExportFullBackup = () => window.location.assign("/admin/export/master-backup.zip");
+
+  const handleImportFullBackup = async (e) => {
+    e.preventDefault();
+    try {
+      const file = new FormData(e.target).get("backup_file");
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("backup_file", file);
+      const resp = await fetch("/admin/import/master-backup.zip", {
+        method: "POST",
+        body: fd,
+        credentials: "include"
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.detail || "Import failed");
+      showToast("Master ZIP imported successfully.");
+      await fetchBootstrap();
+      e.target.reset();
+    } catch (err) { showToast(err.message, "error"); }
+  };
+
   return {
     handleSettingsKeyChange, handleSaveKeyAccessSettings, handleSaveKeyRateLimitSettings,
     toggleSettingsDomainSelection, handleAddSettingsCustomDomain,
     handleToggleGlobalAccess, handleAddDomain, handleRemoveDomain,
     handleCreateBackupNow, handleCloudBackupPush, handleCloudBackupPull,
     handleRestoreLatestBackup, handleExportMasterSetup, handleImportMasterSetup,
+    handleExportAutofill, handleImportAutofill, handleExportCaptcha, handleImportCaptcha,
+    handleExportFullBackup, handleImportFullBackup,
   };
 }

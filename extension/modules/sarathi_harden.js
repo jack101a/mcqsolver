@@ -18,31 +18,23 @@
         },
 
         early403Guard() {
-            const ENTRY_URL  = "https://sarathi.parivahan.gov.in/sarathiservice/authenticationaction.do?authtype=Anugyna";
             const STABLE_URL = "https://sarathi.parivahan.gov.in/sarathiservice/authenticationaction.do?authtype=Anugnya";
             const href = location.href;
             const bodyText = document.body?.innerText?.toLowerCase() || "";
+            const isUnstableAuth = href.includes("authenticationaction.do") && href.includes("authtype=Anugyna");
             const is403Page = href.includes("/403.jsp") || (bodyText.includes("403") && bodyText.includes("forbidden"));
 
-            if (is403Page) {
+            if (is403Page || isUnstableAuth) {
                 try {
-                    const k = "__sp403_count";
-                    let count = Number(sessionStorage.getItem(k) || 0);
-                    
-                    if (count > 2) {
-                        console.error('[Automation] Persistent 403. Triggering nuclear session restart...');
-                        chrome.runtime.sendMessage({ type: 'NUCLEAR_RESTART' });
-                        return;
+                    const k = "__sp403_ts";
+                    const last = Number(sessionStorage.getItem(k) || 0);
+                    if (Date.now() - last > 3000) {
+                        sessionStorage.setItem(k, String(Date.now()));
+                        location.replace(STABLE_URL);
                     }
-
-                    sessionStorage.setItem(k, String(count + 1));
-                    console.log(`[Automation] 403 detected. Redirecting to Entry Point (Attempt ${count + 1})...`);
-                    chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 1 });
-                    location.replace(ENTRY_URL);
                 } catch {}
             } else if (href.includes(STABLE_URL)) {
-                // Reset counter on success
-                try { sessionStorage.removeItem("__sp403_count"); } catch {}
+                try { sessionStorage.removeItem("__sp403_ts"); } catch {}
             }
         },
 

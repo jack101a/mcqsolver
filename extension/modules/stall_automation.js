@@ -2,209 +2,363 @@
 (function () {
     'use strict';
 
+    const sendMessage = (message) => new Promise(resolve => {
+        try {
+            chrome.runtime.sendMessage(message, resp => resolve(resp || null));
+        } catch (_) {
+            resolve(null);
+        }
+    });
+
     window.StallAutomation = {
+        _timerId: null,
+        _busy: false,
+        _manualBusy: false,
+        _finishing: false,
+        _lastActionAt: {},
+        _loadStartedAt: 0,
+
         async sleep(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         },
 
-        async randomSleep(min, max) {
-            const delay = Math.floor(Math.random() * (max - min + 1) + min);
-            return this.sleep(delay);
-        },
-
-        async humanType(el, value) {
-            if (!el) return;
-            el.focus();
-            for (const char of value) {
-                el.value += char;
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                await this.sleep(Math.random() * 50 + 50);
-            }
-            el.blur();
-        },
-
-        async superClick(selector, retries = 5) {
-            for (let i = 0; i < retries; i++) {
-                const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
-                if (el && el.offsetParent !== null) {
-                    console.log(`[Automation] SuperClick attempt ${i+1} on:`, selector);
-                    el.focus();
-                    el.click();
-                    // Fallback to JS trigger
-                    if (el.onclick || el.getAttribute('onclick')) {
-                        const code = el.getAttribute('onclick');
-                        location.href = `javascript:${code}`;
-                    }
-                    await this.sleep(500);
-                    return true;
+        async runConsoleAction(action) {
+            const code = `return (function(){
+                try {
+                    ${action}
+                } catch (e) {
+                    return 'ERR:' + e.message;
                 }
-                await this.sleep(1000);
-            }
-            return false;
+            })();`;
+            return sendMessage({ type: 'SP_EXEC', code });
         },
 
-        async scrapeQuestion() {
-            try {
-                // Total Merge logic to find question text in the DOM
-                const qEl = document.querySelector('.question') || document.querySelector('#question') || document.querySelector('.exam-text');
-                if (qEl) {
-                    const text = qEl.innerText.trim();
-                    chrome.runtime.sendMessage({ type: 'MCQ_QUESTION_DETECTED', text });
-                    return text;
-                }
-            } catch (e) {}
+        findInput(selectors) {
+            for (const selector of selectors) {
+                const el = document.querySelector(selector);
+                if (el) return el;
+            }
             return null;
         },
 
-        async triggerClick(el) {
-            if (!el) return;
-            return await this.superClick(el);
+        readFieldValue(selectors) {
+            const el = this.findInput(selectors);
+            return el ? String(el.value || '').trim() : '';
         },
 
-        async run() {
-            chrome.runtime.sendMessage({ type: 'GET_STALL_STATE' }, async (resp) => {
-                if (!resp?.ok || !resp.state?.active) return;
-                const { state } = resp;
-                const { payloads } = state;
-                const url = location.href;
+        async captureStepInputs() {
+            const appNo = this.readFieldValue(['#llappln', '[name="llappln"]']);
+            const captcha = this.readFieldValue(['#txtCaptcha', '#entcaptxt', '[name="entcaptxt"]']);
+            const values = {};
+            if (appNo) values._stall_appNo = appNo;
+            if (captcha) values._stall_captcha = captcha;
+            if (Object.keys(values).length) await chrome.storage.local.set(values);
+            return { appNo, captcha };
+        },
 
-                console.log(`[Automation] Heartbeat - Step ${state.step}`);
+        readManualFields() {
+            const appNo = this.readFieldValue(['#llappln', '[name="llappln"]']);
+            const dob = this.readFieldValue(['#dob', '[name="dob"]']);
+            const pwd = this.readFieldValue(['[name="pwd"]', '#pwd', 'input[type="password"]']);
+            const captcha = this.readFieldValue(['#txtCaptcha', '#entcaptxt', '[name="entcaptxt"]']);
+            return { appNo, dob, pwd, captcha };
+        },
 
-                this.handlePopups();
+        validateManualFields(fields) {
+            if (!fields.appNo || fields.appNo.length < 5) return 'Fill application number first.';
+            if (!fields.captcha) return 'Fill captcha first.';
+            return '';
+        },
 
-                try {
-                    // --- 1. PERSISTENT HUMAN FILLING ---
-                    const appInput = document.querySelector('#llappln');
-                    const dobInput = document.querySelector('#dob');
-                    const pwdInput = document.getElementsByName('pwd')[0];
+        setStartNowStatus(text, tone) {
+            const status = document.getElementById('stall-start-now-status');
+            if (!status) return;
+            status.textContent = text || '';
+            status.style.color = tone === 'error' ? '#fecaca' : tone === 'ok' ? '#bbf7d0' : '#e0f2fe';
+        },
 
-                    if (appInput && !appInput.value && payloads.appNo) {
-                        await this.randomSleep(500, 1000);
-                        await this.humanType(appInput, payloads.appNo);
-                        return;
-                    }
+        ensureStartNowButton() {
+            if (!location.href.includes('authenticationaction.do')) return;
+            if (document.getElementById('stall-start-now-wrap')) return;
 
-                    if (dobInput && !dobInput.value && payloads.dob) {
-                        await this.randomSleep(500, 1000);
-                        await this.humanType(dobInput, payloads.dob);
-                        return;
-                    }
+            const wrap = document.createElement('div');
+            wrap.id = 'stall-start-now-wrap';
+            wrap.style.cssText = [
+                'position:fixed',
+                'right:18px',
+                'bottom:18px',
+                'z-index:2147483647',
+                'display:flex',
+                'flex-direction:column',
+                'gap:6px',
+                'align-items:stretch',
+                'font-family:Arial,sans-serif'
+            ].join(';');
 
-                    if (pwdInput && !pwdInput.value && payloads.pwd) {
-                        await this.randomSleep(300, 800);
-                        await this.humanType(pwdInput, payloads.pwd);
-                        return;
-                    }
+            const btn = document.createElement('button');
+            btn.id = 'stall-start-now-btn';
+            btn.type = 'button';
+            btn.textContent = 'Start Now';
+            btn.style.cssText = [
+                'border:0',
+                'border-radius:8px',
+                'padding:10px 16px',
+                'font-size:14px',
+                'font-weight:700',
+                'cursor:pointer',
+                'color:#fff',
+                'background:#2563eb',
+                'box-shadow:0 6px 18px rgba(0,0,0,.25)'
+            ].join(';');
 
-                    // --- 2. SIMPLIFIED ACTIONS ---
+            const status = document.createElement('div');
+            status.id = 'stall-start-now-status';
+            status.style.cssText = [
+                'max-width:220px',
+                'padding:6px 8px',
+                'border-radius:6px',
+                'font-size:11px',
+                'line-height:1.3',
+                'color:#e0f2fe',
+                'background:rgba(15,23,42,.92)',
+                'box-shadow:0 4px 14px rgba(0,0,0,.2)'
+            ].join(';');
+            status.textContent = 'Fill details, then click Start Now.';
 
-                    if (url.includes('authenticationaction.do')) {
-                        // Action: Submit Step 1
-                        if (state.step === 1 && appInput && appInput.value) {
-                            const captchaInput = document.querySelector('#captcha') || document.querySelector('[name="v_captcha"]') || document.querySelector('[name="captcha"]');
-                            if (!captchaInput || (captchaInput.value && captchaInput.value.length >= 5)) {
-                                const submitBtn = document.querySelector('input[value="Submit"]');
-                                if (submitBtn) {
-                                    await this.randomSleep(1000, 2000);
-                                    chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 2 });
-                                    await this.triggerClick(submitBtn);
-                                }
-                            }
-                        }
-                        // Action: Advance Step 2
-                        else if (state.step === 2 && dobInput && dobInput.value) {
-                            if (!url.includes('authenticationaction.do') || document.body.innerText.includes('Welcome')) {
-                                chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 3 });
-                            }
-                        }
-                    }
-                    
-                    // Step 3 -> 5s Wait -> Step 4
-                    if (state.step === 3) {
-                        await this.randomSleep(1500, 2500);
-                        await this.executePayload('step3');
-                        chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 3.5 });
-                        await this.sleep(5500);
-                        await this.executePayload('step4');
-                        chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 5 });
-                    }
+            btn.addEventListener('click', () => this.runManualStartNow());
+            wrap.appendChild(btn);
+            wrap.appendChild(status);
+            (document.body || document.documentElement).appendChild(wrap);
+        },
 
-                    // Action: Step 5 (Continue)
-                    if (state.step === 5) {
-                        const continueBtn = document.querySelector('input[value="CONTINUE"]') || document.querySelector('.btn.top-space[value="CONTINUE"]');
-                        if (continueBtn) {
-                            await this.randomSleep(2000, 4000);
-                            chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 6 });
-                            await this.triggerClick(continueBtn);
-                        }
-                    }
-
-                    // Action: Step 6 (Finalizing)
-                    if (state.step === 6) {
-                        // Total Merge: Continuously scrape questions for the solver
-                        await this.scrapeQuestion();
-
-                        const langSelect = document.querySelector('#language');
-                        if (langSelect && langSelect.value !== 'HINDI') {
-                            await this.randomSleep(1000, 2000);
-                            langSelect.value = 'HINDI';
-                            langSelect.dispatchEvent(new Event('change'));
-                            return;
-                        }
-                        
-                        const woAudio = document.querySelector('#radio1') || document.querySelector('input[value="woaudio"]');
-                        if (woAudio && !woAudio.checked) {
-                            await this.randomSleep(500, 1000);
-                            woAudio.click();
-                            return;
-                        }
-
-                        const d1 = document.getElementsByName('disclaimer1')[0];
-                        const d2 = document.getElementsByName('disclaimer2')[0];
-                        if (d1 && !d1.checked) { d1.click(); return; }
-                        if (d2 && !d2.checked) { d2.click(); return; }
-
-                        const finishBtn = document.getElementById('subm') || document.querySelector('input[onclick*="validateExamSelection"]');
-                        if (finishBtn) {
-                            await this.randomSleep(1000, 2000);
-                            chrome.runtime.sendMessage({ type: 'FINISH_STALL_AUTOMATION' });
-                            await this.superClick(finishBtn);
-                        }
-                    }
-
-                } catch (e) {
-                    console.error('[Automation] Sequential error:', e);
+        async runManualStartNow() {
+            if (this._manualBusy) return;
+            this._manualBusy = true;
+            const btn = document.getElementById('stall-start-now-btn');
+            try {
+                const resp = await sendMessage({ type: 'GET_STALL_STATE' });
+                if (!resp?.ok || !resp.state?.active) {
+                    this.setStartNowStatus('STALL session is not active.', 'error');
+                    return;
                 }
-            });
+
+                const fields = this.readManualFields();
+                const error = this.validateManualFields(fields);
+                if (error) {
+                    this.setStartNowStatus(error, 'error');
+                    return;
+                }
+
+                await chrome.storage.local.set({
+                    _stall_appNo: fields.appNo,
+                    _stall_captcha: fields.captcha
+                });
+
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = 'Running...';
+                    btn.style.opacity = '0.8';
+                    btn.style.cursor = 'wait';
+                }
+                this.setStartNowStatus('Running Step 3...', 'ok');
+                await sendMessage({ type: 'UPDATE_STALL_STEP', step: 3 });
+                await this.executePayload('step3');
+
+                this.setStartNowStatus('Waiting 5 seconds for Step 4...', 'ok');
+                await sendMessage({ type: 'UPDATE_STALL_STEP', step: 4 });
+            } catch (e) {
+                console.error('[Automation] Start Now error:', e);
+                this.setStartNowStatus('Start Now failed. Check console.', 'error');
+            } finally {
+                this._manualBusy = false;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Start Now';
+                    btn.style.opacity = '1';
+                    btn.style.cursor = 'pointer';
+                }
+            }
+        },
+
+        async executePayload(stepId) {
+            const resp = await sendMessage({ type: 'FETCH_STALL_PAYLOAD', stepId });
+            if (resp?.ok && resp.payload) {
+                await this.captureStepInputs();
+                // Get saved credentials from storage
+                const data = await chrome.storage.local.get(['_stall_appNo', '_stall_captcha']);
+                const appNo = data._stall_appNo || '';
+                const captcha = data._stall_captcha || '';
+                const appNoLiteral = JSON.stringify(appNo);
+                const captchaLiteral = JSON.stringify(captcha);
+                
+                const wrappedPayload = `(function(){
+                    try {
+                        var appNo = ${appNoLiteral};
+                        var captcha = ${captchaLiteral};
+                        var ensureField = function(name, id, value) {
+                            var el = document.querySelector('[name="' + name + '"]') || (id ? document.getElementById(id) : null);
+                            if (!el) {
+                                el = document.createElement('input');
+                                el.type = 'hidden';
+                                el.name = name;
+                                if (id) el.id = id;
+                                (document.body || document.documentElement).appendChild(el);
+                            }
+                            if (value) {
+                                el.value = value;
+                                el.setAttribute('value', value);
+                                try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+                                try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+                            }
+                            return el;
+                        };
+                        ensureField('llappln', 'llappln', appNo);
+                        ensureField('entcaptxt', 'entcaptxt', captcha);
+                        var visibleCaptcha = document.getElementById('txtCaptcha');
+                        if (visibleCaptcha && captcha) {
+                            visibleCaptcha.value = captcha;
+                            visibleCaptcha.setAttribute('value', captcha);
+                        }
+                        ${resp.payload}
+                    } catch (e) { console.error('[Automation] Script Error:', e); }
+                })()`;
+                return sendMessage({ type: 'SP_EXEC', code: wrappedPayload });
+            }
+            return resp;
         },
 
         handlePopups() {
             try {
-                const okButtons = document.querySelectorAll('button, input[type="button"]');
+                const okButtons = [
+                    ...document.querySelectorAll('button'),
+                    ...document.querySelectorAll('input[type="button"]'),
+                    ...document.querySelectorAll('.ui-button')
+                ];
                 for (const btn of okButtons) {
                     const txt = (btn.innerText || btn.value || '').toLowerCase();
-                    if (txt === 'ok' || txt === 'close' || txt === 'agree' || txt === 'accept') {
-                        if (btn.offsetParent !== null) {
-                            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-                            btn.click();
-                        }
+                    if (['ok', 'close', 'agree', 'accept'].includes(txt)) {
+                        if (btn.offsetParent !== null) btn.click();
                     }
                 }
-            } catch {}
+            } catch (_) {}
         },
 
-        async executePayload(stepId) {
-            return new Promise((resolve) => {
-                chrome.runtime.sendMessage({ type: 'FETCH_STALL_PAYLOAD', stepId }, (resp) => {
-                    if (resp?.ok && resp.payload) {
-                        chrome.runtime.sendMessage({ type: 'SP_EXEC', code: resp.payload }, () => resolve());
-                    } else {
-                        resolve();
+        async tick() {
+            if (this._busy) return;
+            this._busy = true;
+            try {
+                const now = Date.now();
+                if (!this._loadStartedAt) this._loadStartedAt = now;
+
+                const resp = await sendMessage({ type: 'GET_STALL_STATE' });
+                if (!resp?.ok || !resp.state?.active) {
+                    this._loadStartedAt = 0;
+                    this.stop();
+                    return;
+                }
+
+                const { state } = resp;
+                const url = location.href;
+
+                if (now - this._loadStartedAt < 3000) return; // Wait 3s
+
+                this.handlePopups();
+                this.ensureStartNowButton();
+
+                if (state.step < 3 && url.includes('authenticationaction.do')) {
+                    await this.captureStepInputs();
+                    return;
+                }
+
+                // --- STEP 5: Continue ---
+                if (state.step === 5) {
+                    if (url.includes('authenticationaction.do')) {
+                        const btn = document.querySelector('input[value="CONTINUE"]');
+                        if (btn) {
+                            await this.runConsoleAction(`
+                                if (typeof validateExamSelection === 'function') validateExamSelection();
+                                var b = document.querySelector('input[value="CONTINUE"]');
+                                if (b) b.click();
+                            `);
+                            await sendMessage({ type: 'UPDATE_STALL_STEP', step: 6 });
+                        }
                     }
-                });
+                    return;
+                }
+
+                // --- STEP 6: Language & Finish ---
+                if (state.step === 6 && (url.includes('ExamDisclaimer') || url.includes('examSelection'))) {
+                    const langSelect = document.getElementById("language");
+                    if (langSelect && langSelect.value !== "HINDI") {
+                        langSelect.value = "HINDI";
+                        langSelect.dispatchEvent(new Event("change", { bubbles: true }));
+                        return;
+                    }
+
+                    const d1 = document.querySelector('input[name="disclaimer1"]');
+                    const d2 = document.querySelector('input[name="disclaimer2"]');
+                    const btn = document.getElementById('subm');
+
+                    if (btn && !this._finishing) {
+                        this._finishing = true;
+                        [d1, d2].forEach(el => {
+                            if (el) {
+                                el.checked = true;
+                                el.dispatchEvent(new Event('click', { bubbles: true }));
+                            }
+                        });
+
+                        this.setStartNowStatus('Finishing...', 'ok');
+                        setTimeout(async () => {
+                            await this.runConsoleAction(`
+                                if (typeof validateExamSelection === 'function') validateExamSelection();
+                                var b = document.getElementById('subm');
+                                if (b) b.click();
+                            `);
+                            await sendMessage({ type: 'FINISH_STALL_AUTOMATION' });
+                            this._finishing = false;
+                        }, 500);
+                    }
+                }
+
+            } catch (e) {
+                console.error('[Automation] Tick error:', e);
+            } finally {
+                this._busy = false;
+            }
+        },
+
+        start() {
+            if (this._timerId) return;
+            this._loadStartedAt = Date.now();
+            
+            // Real-time listener to capture Application No and Captcha as user types
+            document.addEventListener('input', (e) => {
+                const id = e.target.id;
+                const name = e.target.name;
+                if (id === 'llappln' || name === 'llappln') {
+                    chrome.storage.local.set({ _stall_appNo: e.target.value });
+                } else if (id === 'txtCaptcha' || id === 'entcaptxt' || name === 'entcaptxt') {
+                    chrome.storage.local.set({ _stall_captcha: e.target.value });
+                }
+            });
+
+            this.tick();
+            this._timerId = setInterval(() => this.tick(), 1000);
+        },
+
+        stop() {
+            if (this._timerId) {
+                clearInterval(this._timerId);
+                this._timerId = null;
+            }
+        },
+
+        run() {
+            this.start();
+            chrome.runtime.onMessage.addListener((m) => {
+                if (m.type === 'EXECUTE_STALL_STEP') this.tick();
             });
         }
     };
-
 })();

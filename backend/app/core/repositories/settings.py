@@ -146,6 +146,8 @@ class SettingsRepository(BaseRepository):
         return {
             "global_access": self.get_global_access(),
             "allowed_domains": self.get_allowed_domains(),
+            "platform_settings": self.get_all_settings(),
+            "autofill_rules": self.db.autofill.get_approved_autofill_rules(),
             "model_routes": self.db.models.get_all_model_routes(),
             "model_registry": self.db.models.get_model_registry(),
             "field_mappings": self.db.models.get_all_field_mappings(),
@@ -169,6 +171,40 @@ class SettingsRepository(BaseRepository):
                     d = self._normalize_domain(domain)
                     if d:
                         conn.execute("INSERT OR IGNORE INTO allowed_domains (domain) VALUES (?)", (d,))
+
+                # Import platform_settings
+                for s in payload.get("platform_settings", []) or []:
+                    key = str(s.get("key") or "").strip()
+                    val = str(s.get("value") or "").strip()
+                    desc = s.get("description")
+                    if key:
+                        conn.execute(
+                            """
+                            INSERT INTO platform_settings (key, value, description, updated_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(key) DO UPDATE SET
+                                value = excluded.value,
+                                description = COALESCE(excluded.description, platform_settings.description),
+                                updated_at = excluded.updated_at
+                            """,
+                            (key, val, desc, now),
+                        )
+
+                # Import autofill_rules
+                # Note: This table is usually autofill_rule_proposals with status='approved'
+                for rule in payload.get("autofill_rules", []) or []:
+                    rule_json = rule.get("rule_json")
+                    approved_id = rule.get("approved_rule_id")
+                    if rule_json and approved_id:
+                        conn.execute(
+                            """
+                            INSERT INTO autofill_rule_proposals 
+                                (idempotency_key, device_id, api_key_id, status, submitted_at, rule_json, approved_rule_id, reviewed_at, created_at)
+                            VALUES (?, ?, ?, 'approved', ?, ?, ?, ?, ?)
+                            ON CONFLICT(approved_rule_id) DO NOTHING
+                            """,
+                            ("imported_" + approved_id, "imported", 0, now, rule_json, approved_id, now, now),
+                        )
 
                 model_id_by_filename: dict[str, int] = {}
                 for item in payload.get("model_registry", []) or []:

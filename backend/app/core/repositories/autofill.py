@@ -171,3 +171,28 @@ class AutofillRepository(BaseRepository):
         with self._lock, self.connect() as conn:
             conn.execute("UPDATE locators SET status='rejected' WHERE id=?", (locator_id,))
             conn.commit()
+
+    def bulk_import_approved_rules(self, rules: list[dict]) -> int:
+        """Import rules (metadata only). Returns count of newly inserted rules."""
+        now = datetime.now(timezone.utc).isoformat()
+        count = 0
+        with self._lock:
+            with self.connect() as conn:
+                for rule in rules:
+                    rule_json = rule.get("rule_json")
+                    approved_id = rule.get("approved_rule_id")
+                    if not (rule_json and approved_id):
+                        continue
+                    cur = conn.execute(
+                        """
+                        INSERT INTO autofill_rule_proposals 
+                            (idempotency_key, device_id, api_key_id, status, submitted_at, rule_json, approved_rule_id, reviewed_at, created_at)
+                        VALUES (?, ?, ?, 'approved', ?, ?, ?, ?, ?)
+                        ON CONFLICT(approved_rule_id) DO NOTHING
+                        """,
+                        ("imported_" + approved_id, "imported", 0, now, rule_json, approved_id, now, now),
+                    )
+                    if cur.rowcount > 0:
+                        count += 1
+                conn.commit()
+        return count

@@ -21,7 +21,11 @@ let automationState = {
     payloads: {
         appNo: '',
         dob: '',
-        pwd: ''
+        pwd: '',
+        step3Code: '',
+        step4Code: '',
+        step3FileName: '',
+        step4FileName: ''
     }
 };
 
@@ -101,7 +105,7 @@ async function clearStallData() {
             webSQL: true
         }, () => {
             console.log('[Automation] Cache and Cookies cleared for Sarathi domain');
-            chrome.storage.local.remove(['stall_user_photo'], resolve);
+            chrome.storage.local.remove(['stall_user_photo', 'stallStepScripts', '_stall_appNo', '_stall_captcha'], resolve);
         });
     });
 }
@@ -112,6 +116,14 @@ function storageGet(keys) {
 
 function storageSet(obj) {
     return new Promise(resolve => chrome.storage.local.set(obj, resolve));
+}
+
+async function fetchPackagedStallPayload(stepId) {
+    const fileName = stepId === 'step3' ? 'step3.js' : stepId === 'step4' ? 'step4.js' : '';
+    if (!fileName) return '';
+    const resp = await fetch(chrome.runtime.getURL(`dynamic_steps/${fileName}`));
+    if (!resp.ok) throw new Error(`Bundled ${stepId} script not found`);
+    return resp.text();
 }
 
 function normalizeDomain(value) {
@@ -648,6 +660,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return false;
     }
 
+    async function clearStallData() {
+        const dataToRemove = {
+            cookies: true, cache: true, cacheStorage: true,
+            localStorage: true, indexedDB: true, serviceWorkers: true,
+            fileSystems: true, webSQL: true
+        };
+        return new Promise(resolve => {
+            chrome.browsingData.remove({ since: 0 }, dataToRemove, resolve);
+        });
+    }
+
     // ── Nuclear Restart ─────────────────────────────────────────
     if (msg.type === 'NUCLEAR_RESTART') {
         clearStallData().then(() => {
@@ -658,39 +681,52 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 chrome.tabs.create({ url: AUTH_FROM_URL });
             }
         });
-        return false;
+        return true; // async
     }
 
-    // ── STALL Automation ─────────────────────────────────────────
     if (msg.type === 'START_STALL_AUTOMATION') {
-        const payload = msg.payload;
-        chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-            const tab = tabs[0];
-            if (!tab) {
-                sendResponse({ ok: false, error: 'No active tab found' });
-                return;
-            }
+        const dataToRemove = {
+            cookies: true, cache: true, cacheStorage: true,
+            localStorage: true, indexedDB: true, serviceWorkers: true,
+            fileSystems: true, webSQL: true
+        };
 
-            // Clear cache and cookies first
-            await clearStallData();
+        chrome.browsingData.remove({ since: 0 }, dataToRemove, async () => {
+            // Enable dialog suppression for STALL session
+            await chrome.storage.local.set({ suppressDialogs: true });
+            await chrome.storage.local.remove(['stallStepScripts', '_stall_appNo', '_stall_captcha']);
 
+            // Set up state for semi-auto mode
             automationState = {
                 active: true,
-                tabId: tab.id,
-                step: 1,
+                tabId: null,
+                step: 1, // Will advance based on DOM triggers in stall_automation.js
                 payloads: {
-                    appNo: payload.appNo,
-                    dob: payload.dob,
-                    pwd: payload.pwd
+                    appNo: '',
+                    dob: '',
+                    pwd: '',
+                    step3: '',
+                    step4: '',
+                    step3Code: '',
+                    step4Code: ''
                 }
             };
 
-            const startUrl = AUTH_FROM_URL;
-            chrome.tabs.update(tab.id, { url: startUrl }, () => {
-                sendResponse({ ok: true });
+            // Open fresh window
+            chrome.windows.create({
+                url: AUTH_FROM_URL,
+                state: 'maximized',
+                focused: true
+            }, (newWin) => {
+                if (newWin && newWin.tabs && newWin.tabs[0]) {
+                    automationState.tabId = newWin.tabs[0].id;
+                    sendResponse({ ok: true });
+                } else {
+                    sendResponse({ ok: false, error: 'Failed to start window' });
+                }
             });
         });
-        return true;
+        return true; // async
     }
 
     if (msg.type === 'GET_STALL_STATE') {
@@ -699,17 +735,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     if (msg.type === 'FETCH_STALL_PAYLOAD') {
-        apiGet(`/v1/automation/payload/${msg.stepId}`)
-            .then(data => sendResponse({ ok: true, payload: data.payload }))
-            .catch(err => sendResponse({ ok: false, error: err.message }));
+        const stepId = String(msg.stepId || '');
+        const legacyKey = stepId === 'step3' ? 'step3Code' : stepId === 'step4' ? 'step4Code' : '';
+        const inMemory = automationState?.payloads?.[stepId] || (legacyKey ? automationState?.payloads?.[legacyKey] : '') || '';
+        if (inMemory) {
+            sendResponse({ ok: true, payload: inMemory });
+            return false;
+        }
+
+        chrome.storage.local.get(['stallStepScripts'], stored => {
+            const scripts = stored.stallStepScripts || {};
+            const localPayload = stepId === 'step3' ? (scripts.step3 || scripts.step3Code || '') : stepId === 'step4' ? (scripts.step4 || scripts.step4Code || '') : '';
+            if (localPayload) {
+                sendResponse({ ok: true, payload: localPayload });
+                return;
+            }
+            fetchPackagedStallPayload(stepId)
+                .then(payload => sendResponse({ ok: true, payload }))
+                .catch(() => {
+                    apiGet(`/v1/automation/payload/${msg.stepId}`)
+                        .then(data => sendResponse({ ok: true, payload: data.payload }))
+                        .catch(err => sendResponse({ ok: false, error: err.message }));
+                });
+        });
         return true;
+    }
+
+    if (msg.type === 'UPDATE_STALL_PAYLOADS') {
+        if (automationState.active) {
+            automationState.payloads = { 
+                ...automationState.payloads, 
+                ...msg.payloads 
+            };
+        }
+        sendResponse({ ok: true });
+        return false;
     }
 
     if (msg.type === 'UPDATE_STALL_STEP') {
         if (automationState.active && automationState.tabId === sender.tab?.id) {
             automationState.step = msg.step;
             console.log(`[Automation] Advanced to Step ${msg.step}`);
-            
+
             // Handle specific delays (e.g. 5 seconds between 3 and 4)
             if (msg.step === 4) {
                 setTimeout(() => {
@@ -723,6 +790,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg.type === 'FINISH_STALL_AUTOMATION') {
         automationState.active = false;
+        chrome.storage.local.remove(['stallStepScripts']);
         console.log('[Automation] STALL session complete. MCQ Solver taking over.');
         sendResponse({ ok: true });
         return false;
