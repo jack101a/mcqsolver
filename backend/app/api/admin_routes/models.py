@@ -7,14 +7,16 @@ from fastapi import APIRouter, Request, Form, File, UploadFile, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import (
     _admin_guard, _write_auto_backup, _slug, _model_upload_error,
-    _model_upload_success, _default_field_for_task, _normalize_domain, _wants_json
+    _model_upload_success, _default_field_for_task, _wants_json
 )
 from urllib.parse import quote_plus
+from app.core.database import Database
+from app.core.paths import get_project_root
 
 router = APIRouter(tags=["admin-models"])
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
-_MODELS_DIR = (_PROJECT_ROOT / "backend" / "models").resolve()
+_PROJECT_ROOT = get_project_root()
+_MODELS_DIR = (_PROJECT_ROOT / "data" / "models").resolve()
 _DATASETS_DIR = (_PROJECT_ROOT / "backend" / "datasets").resolve()
 
 @router.post("/routes")
@@ -208,7 +210,7 @@ async def set_mapping(
     clean_source_selector = source_selector.strip()
     clean_target_selector = target_selector.strip()
     clean_field = _default_field_for_task(clean_task_type)
-    clean_domain = _normalize_domain(domain)
+    clean_domain = Database._normalize_domain(domain)
     if not clean_domain:
         raise HTTPException(status_code=400, detail="domain is required")
     container.db.set_field_mapping(
@@ -249,7 +251,7 @@ async def update_mapping(
     clean_source_selector = source_selector.strip()
     clean_target_selector = target_selector.strip()
     clean_field = _default_field_for_task(clean_task_type)
-    clean_domain = _normalize_domain(domain)
+    clean_domain = Database._normalize_domain(domain)
     if not clean_domain:
         raise HTTPException(status_code=400, detail="domain is required")
     container.db.update_field_mapping(
@@ -276,8 +278,8 @@ async def update_mapping_domain(
     if denied:
         return denied
     container = request.app.state.container
-    clean_old = _normalize_domain(old_domain)
-    clean_new = _normalize_domain(new_domain)
+    clean_old = Database._normalize_domain(old_domain)
+    clean_new = Database._normalize_domain(new_domain)
     if not clean_old or not clean_new:
         raise HTTPException(status_code=400, detail="old_domain and new_domain are required")
     try:

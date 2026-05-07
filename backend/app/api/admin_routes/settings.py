@@ -1,10 +1,80 @@
 from __future__ import annotations
 import os
+import json
+import re
+from pathlib import Path
 from fastapi import APIRouter, Request, Form, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
+from app.core.userscript_utils import parse_userscript_meta
+from app.core.paths import get_project_root
 from .utils import _admin_guard, _write_auto_backup
 
 router = APIRouter(tags=["admin-settings"])
+_PROJECT_ROOT = get_project_root()
+_USERSCRIPTS_DIR = (_PROJECT_ROOT / "data" / "mappings").resolve()
+
+
+def _extension_filename_for_format(fmt: str) -> str:
+    normalized = str(fmt or "").strip().lower()
+    mapping = {
+        "zip": "mcq_solver_extension.zip",
+        "crx": "mcq_solver_extension.crx",
+        "xpi": "mcq_solver_extension.xpi",
+    }
+    if normalized not in mapping:
+        raise HTTPException(400, "Unsupported extension format. Use zip, crx, or xpi.")
+    return mapping[normalized]
+
+
+def _ensure_headers(name: str, version: str, matches: list[str], runAt: str, code: str) -> str:
+    if "==UserScript==" in code:
+        return code
+    header = [
+        "// ==UserScript==",
+        f"// @name        {name}",
+        f"// @version     {version}",
+        f"// @run-at       {runAt}",
+    ]
+    for m in matches:
+        header.append(f"// @match       {m}")
+    header.append("// ==/UserScript==")
+    header.append("")
+    return "\n".join(header) + "\n" + code
+
+
+def _update_index():
+    _USERSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    index_path = (_USERSCRIPTS_DIR / "index.json").resolve()
+    existing_entries = {}
+    if index_path.is_file():
+        try:
+            data = json.loads(index_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                for e in data:
+                    if isinstance(e, dict) and "id" in e:
+                        existing_entries[str(e["id"])] = e
+        except Exception:
+            pass
+    new_index = []
+    for file_path in sorted(_USERSCRIPTS_DIR.glob("*.user.js")):
+        if not file_path.is_file():
+            continue
+        code = file_path.read_text(encoding="utf-8")
+        meta = parse_userscript_meta(code)
+        uid = file_path.stem.replace(".user", "")
+        enabled = True
+        if uid in existing_entries:
+            enabled = bool(existing_entries[uid].get("enabled", True))
+        new_index.append({
+            "id": uid,
+            "file": file_path.name,
+            "name": meta["name"] or uid,
+            "version": meta["version"],
+            "enabled": enabled,
+            "matches": meta["matches"],
+            "runAt": meta["runAt"],
+        })
+    index_path.write_text(json.dumps(new_index, indent=2), encoding="utf-8")
 
 @router.post("/access")
 async def update_access(request: Request, global_access: str = Form(None), new_domain: str = Form(None)):
@@ -42,7 +112,8 @@ async def get_settings(request: Request):
     for s in settings_list:
         row = dict(s)
         if row["key"] in SECRET_KEYS and row["value"]:
-            row["value_display"] = row["value"][:4] + "****" + row["value"][-2:]
+            v = row["value"]
+            row["value_display"] = v[:4] + "****" + v[-2:] if len(v) >= 8 else "***"
             row["is_secret"] = True
         else:
             row["value_display"] = row["value"]
@@ -103,10 +174,10 @@ async def get_alert_config(request: Request):
     container = request.app.state.container
     svc = container.alert_service
     return {
-        "enabled":       svc._enabled,
-        "phone_set":     bool(svc._phone),
-        "apikey_set":    bool(svc._apikey),
-        "phone_preview": (svc._phone[:4] + "****" + svc._phone[-3:]) if len(svc._phone) > 7 else "not set",
+        "enabled":       svc._enabled(),
+        "phone_set":     bool(svc._phone()),
+        "apikey_set":    bool(svc._apikey()),
+        "phone_preview": (svc._phone()[:4] + "****" + svc._phone()[-3:]) if len(svc._phone()) > 7 else "not set",
     }
 
 @router.post("/api/alerts/test")
@@ -141,3 +212,168 @@ async def repack_extension(request: Request):
         raise HTTPException(500, "Failed to package extension. Check backend logs.")
     return {"ok": True, "message": "Extension repackaged successfully"}
 
+
+@router.get("/api/extension/download")
+async def download_extension(request: Request, format: str = "zip"):
+    """Package and download a fresh extension artifact in the requested format."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+
+    container = request.app.state.container
+    filename = _extension_filename_for_format(format)  # validate format before packaging
+
+    success = container.extension_service.package_extension()
+    if not success:
+        raise HTTPException(500, "Failed to package extension. Check backend logs.")
+
+    artifact_path = container.extension_service.output_dir / filename
+    if not artifact_path.exists():
+        raise HTTPException(500, f"Packaged extension file not found: {filename}")
+
+    media_type = "application/zip" if filename.endswith(".zip") else "application/octet-stream"
+    return FileResponse(path=artifact_path, media_type=media_type, filename=filename)
+
+
+@router.get("/api/userscripts")
+async def list_userscripts(request: Request):
+    """Admin listing for backend-controlled userscripts."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    
+    _USERSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    scripts: list[dict] = []
+    index_path = (_USERSCRIPTS_DIR / "index.json").resolve()
+    
+    if index_path.is_file():
+        try:
+            entries = json.loads(index_path.read_text(encoding="utf-8"))
+            if isinstance(entries, list):
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    file_name = str(entry.get("file", "")).strip()
+                    if not file_name:
+                        continue
+                    file_path = (_USERSCRIPTS_DIR / file_name).resolve()
+                    if _USERSCRIPTS_DIR not in file_path.parents or not file_path.is_file():
+                        continue
+                    code = file_path.read_text(encoding="utf-8")
+                    parsed = parse_userscript_meta(code)
+                    scripts.append({
+                        "id": str(entry.get("id") or file_path.stem.replace(".user", "")),
+                        "file": file_path.name,
+                        "name": str(entry.get("name") or parsed["name"] or file_path.stem),
+                        "version": str(entry.get("version") or parsed["version"]),
+                        "enabled": bool(entry.get("enabled", True)),
+                        "matches_count": len(entry.get("matches") if isinstance(entry.get("matches"), list) else parsed["matches"]),
+                        "runAt": str(entry.get("runAt") or parsed["runAt"]),
+                        "updated_at": file_path.stat().st_mtime,
+                        "code": code,
+                    })
+        except Exception:
+            pass
+    else:
+        for file_path in sorted(_USERSCRIPTS_DIR.glob("*.user.js")):
+            if not file_path.is_file():
+                continue
+            code = file_path.read_text(encoding="utf-8")
+            parsed = parse_userscript_meta(code)
+            scripts.append({
+                "id": file_path.stem.replace(".user", ""),
+                "file": file_path.name,
+                "name": parsed["name"] or file_path.stem,
+                "version": parsed["version"],
+                "enabled": True,
+                "matches_count": len(parsed["matches"]),
+                "runAt": parsed["runAt"],
+                "updated_at": file_path.stat().st_mtime,
+                "code": code,
+            })
+    
+    return {"scripts": scripts, "count": len(scripts)}
+
+
+@router.post("/api/userscripts")
+async def create_userscript(request: Request):
+    """Create a new backend-controlled userscript."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+    
+    code_body = body.get("code", "").strip()
+    if not code_body:
+        raise HTTPException(400, "code is required")
+    
+    meta = parse_userscript_meta(code_body)
+    
+    name = (body.get("name") or meta["name"] or "").strip()
+    if not name:
+        raise HTTPException(400, "Userscript name is required (either in headers or as a separate field)")
+        
+    uid = re.sub(r"\W+", "_", name.lower())
+    version = (body.get("version") or meta["version"] or "0.0.0").strip()
+    matches = body.get("matches") if body.get("matches") is not None else meta["matches"]
+    runAt = (body.get("runAt") or meta["runAt"] or "document-idle").strip()
+    
+    final_code = _ensure_headers(name, version, matches, runAt, code_body)
+    _USERSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = _USERSCRIPTS_DIR / f"{uid}.user.js"
+    if file_path.exists():
+        raise HTTPException(400, f"Userscript with id {uid} already exists")
+    file_path.write_text(final_code, encoding="utf-8")
+    _update_index()
+    return {"ok": True, "id": uid}
+
+
+@router.put("/api/userscripts/{uid}")
+async def update_userscript(request: Request, uid: str):
+    """Update an existing backend-controlled userscript."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+    
+    code_body = body.get("code", "").strip()
+    if not code_body:
+        raise HTTPException(400, "code is required")
+    
+    meta = parse_userscript_meta(code_body)
+    
+    name = (body.get("name") or meta["name"] or "").strip()
+    if not name:
+        raise HTTPException(400, "Userscript name is required (either in headers or as a separate field)")
+    
+    version = (body.get("version") or meta["version"] or "0.0.0").strip()
+    matches = body.get("matches") if body.get("matches") is not None else meta["matches"]
+    runAt = (body.get("runAt") or meta["runAt"] or "document-idle").strip()
+    
+    final_code = _ensure_headers(name, version, matches, runAt, code_body)
+    file_path = _USERSCRIPTS_DIR / f"{uid}.user.js"
+    if not file_path.exists():
+        raise HTTPException(404, f"Userscript {uid} not found")
+    file_path.write_text(final_code, encoding="utf-8")
+    _update_index()
+    return {"ok": True, "id": uid}
+
+
+@router.delete("/api/userscripts/{uid}")
+async def delete_userscript(request: Request, uid: str):
+    """Delete a backend-controlled userscript."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    file_path = _USERSCRIPTS_DIR / f"{uid}.user.js"
+    if not file_path.exists():
+        raise HTTPException(404, f"Userscript {uid} not found")
+    file_path.unlink()
+    _update_index()
+    return {"ok": True}

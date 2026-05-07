@@ -478,6 +478,8 @@ class ModelRepository(BaseRepository):
         if not parts:
             return False
         params.append(proposal_id)
+        # SAFETY: column names in `parts` are validated against the `allowed` set above.
+        # Parameters use ? placeholders.
         sql = f"UPDATE field_mapping_proposals SET {', '.join(parts)} WHERE id = ?"
         with self._lock:
             with self.connect() as conn:

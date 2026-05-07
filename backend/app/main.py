@@ -22,6 +22,8 @@ settings = get_settings()
 configure_logging(settings=settings)
 container = build_container(settings=settings)
 
+_API_VERSION = "2.0.0"
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -53,7 +55,7 @@ async def lifespan(application: FastAPI):
 app = FastAPI(
     title="Unified Platform API",
     description="Text Captcha · MCQ Exam Solver · Autofill — Multi-user SaaS",
-    version="2.0.0",
+    version=_API_VERSION,
     debug=settings.server.debug,
     lifespan=lifespan,
 )
@@ -87,4 +89,4 @@ if _admin_assets.exists():
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "unified-platform", "version": "2.0.0"}
+    return {"status": "ok", "service": "unified-platform", "version": _API_VERSION}

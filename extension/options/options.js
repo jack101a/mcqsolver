@@ -1,13 +1,51 @@
 'use strict';
 
+// Global error handler
+window.onerror = function (msg, src, line, col, err) {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background:var(--danger);color:#fff;text-align:center;padding:10px;font-size:13px;font-weight:600;position:fixed;top:0;left:0;right:0;z-index:9999;';
+    banner.textContent = '⚠ An unexpected error occurred. Please reload the page.';
+    document.body.prepend(banner);
+    console.error('[Options Error]', msg, src, line, col, err);
+};
+window.onunhandledrejection = function (ev) {
+    console.error('[Options Unhandled Rejection]', ev.reason);
+};
+
 // ── Globals & Constants ──────────────────────────────────────────────────────
 const PROFILE_FIELDS = [];
 
 let state = {
     rules: [],
+    captchaRoutes: [],
     settings: {},
     theme: 'dark'
 };
+
+function el(id) { return document.getElementById(id); }
+
+function setLoading(btnId, loading) {
+    const btn = el(btnId);
+    if (!btn) return;
+    if (loading) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.dataset.originalText = btn.textContent;
+        btn.innerHTML = '<span class="spinner"></span>' + btn.textContent;
+    } else {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        btn.textContent = btn.dataset.originalText || btn.textContent;
+    }
+}
+
+function debounce(fn, ms) {
+    let timer;
+    return function (...args) {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), ms);
+    };
+}
 
 function storageGet(keys) {
     return new Promise(resolve => {
@@ -15,17 +53,55 @@ function storageGet(keys) {
     });
 }
 
+async function getDeviceId() {
+    const data = await storageGet(['deviceId']);
+    let deviceId = String(data.deviceId || '').trim();
+    if (deviceId) return deviceId;
+
+    deviceId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `dev_${chrome.runtime.id}_${Date.now()}`;
+    await chrome.storage.local.set({ deviceId });
+    return deviceId;
+}
+
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(item => {
-    item.addEventListener('click', () => {
-        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        item.classList.add('active');
-        document.getElementById('tab-' + item.dataset.tab).classList.add('active');
+    item.addEventListener('click', () => activateTab(item.dataset.tab));
+    item.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            activateTab(item.dataset.tab);
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const items = Array.from(document.querySelectorAll('.nav-item'));
+            const idx = items.indexOf(item);
+            const next = e.key === 'ArrowDown'
+                ? items[(idx + 1) % items.length]
+                : items[(idx - 1 + items.length) % items.length];
+            next.focus();
+        }
     });
 });
 
-function el(id) { return document.getElementById(id); }
+function activateTab(tabName) {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    const navItem = document.querySelector(`.nav-item[data-tab="${tabName}"]`);
+    const tabPanel = document.getElementById('tab-' + tabName);
+    if (navItem) navItem.classList.add('active');
+    if (tabPanel) tabPanel.classList.add('active');
+    chrome.storage.local.set({ activeOptionsTab: tabName });
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 function showMsg(msgId, text, isOk = true) {
     const el2 = el(msgId);
@@ -38,7 +114,12 @@ function showMsg(msgId, text, isOk = true) {
 
 // ── Initialization ───────────────────────────────────────────────────────────
 async function init() {
-    const data = await storageGet(['apiKey', 'serverUrl', 'isMaster', 'rules', 'autofillSettings', 'captchaEnabled', 'solverEnabled', 'autofillEnabled', 'autoRefresh', 'autoScreenshot', 'theme']);
+    const data = await storageGet([
+        'apiKey', 'serverUrl', 'isMaster', 'rules', 'autofillSettings',
+        'captchaEnabled', 'solverEnabled', 'autofillEnabled', 'autoRefresh',
+        'autoScreenshot', 'theme', 'normalized_userscripts', 'userscriptsEnabled',
+        'globalFieldRoutes', 'globalLocators', 'domainFieldRoutes', 'activeOptionsTab'
+    ]);
     
     // Check Master Access
     if (!data.isMaster && data.apiKey) {
@@ -73,6 +154,10 @@ async function init() {
     // Theme
     state.theme = data.theme || 'dark';
     applyTheme(state.theme);
+    // Restore last active tab
+    if (data.activeOptionsTab) {
+        activateTab(data.activeOptionsTab);
+    }
     // Connection
     if (data.apiKey)    el('api-key').value    = data.apiKey;
     if (data.serverUrl) el('server-url').value = data.serverUrl;
@@ -80,6 +165,12 @@ async function init() {
     // Rules
     state.rules = data.rules || [];
     renderRules();
+    state.captchaRoutes = buildCaptchaRoutes(data);
+    renderCaptchaRoutes();
+    renderUserscripts(data.normalized_userscripts || []);
+    if (el('tog-userscripts-enabled')) {
+        el('tog-userscripts-enabled').checked = data.userscriptsEnabled !== false;
+    }
 
     // Services & Settings
     el('tog-captcha').checked  = data.captchaEnabled !== false;
@@ -101,6 +192,131 @@ async function init() {
     }
 
     setupDataPortability();
+
+    // Offline detection
+    const offlineBanner = document.createElement('div');
+    offlineBanner.style.cssText = 'display:none;background:var(--danger);color:#fff;text-align:center;padding:8px;font-size:12px;font-weight:600;position:fixed;top:0;left:0;right:0;z-index:9999;';
+    offlineBanner.textContent = '⚠ You are offline — changes will not sync';
+    document.body.prepend(offlineBanner);
+    window.addEventListener('offline', () => { offlineBanner.style.display = 'block'; });
+    window.addEventListener('online', () => { offlineBanner.style.display = 'none'; });
+}
+
+function normalizeDomain(value) {
+    let token = String(value || '').trim().toLowerCase();
+    if (!token) return '';
+    try {
+        if (token.includes('://')) token = new URL(token).hostname;
+    } catch (_) {}
+    token = token.split('/', 1)[0].split(':', 1)[0].replace(/\.$/, '');
+    if (token.startsWith('www.')) token = token.slice(4);
+    return token;
+}
+
+function buildCaptchaRoutes(data) {
+    const routes = [];
+    const seen = new Set();
+    const addRoute = (entry) => {
+        const sig = `${entry.domain}|${entry.taskType}|${entry.sourceSelector}|${entry.targetSelector}`;
+        if (seen.has(sig)) return;
+        seen.add(sig);
+        routes.push(entry);
+    };
+
+    const globalFieldRoutes = data.globalFieldRoutes || {};
+    for (const [domain, entries] of Object.entries(globalFieldRoutes)) {
+        for (const r of (entries || [])) {
+            const taskType = String(r.task_type || r.source_data_type || '').trim();
+            if (taskType !== 'image' && taskType !== 'text') continue;
+            addRoute({
+                origin: 'server',
+                domain: normalizeDomain(domain),
+                taskType,
+                sourceSelector: String(r.source_selector || ''),
+                targetSelector: String(r.target_selector || ''),
+                fieldName: String(r.proposed_field_name || `${taskType}_default`)
+            });
+        }
+    }
+
+    const globalLocators = data.globalLocators || {};
+    for (const [domain, loc] of Object.entries(globalLocators)) {
+        if (!loc) continue;
+        addRoute({
+            origin: 'server',
+            domain: normalizeDomain(domain),
+            taskType: 'image',
+            sourceSelector: String(loc.img || loc.image_selector || ''),
+            targetSelector: String(loc.input || loc.input_selector || ''),
+            fieldName: 'image_default'
+        });
+    }
+
+    const localRoutes = Array.isArray(data.domainFieldRoutes) ? data.domainFieldRoutes : [];
+    for (const r of localRoutes) {
+        addRoute({
+            origin: 'local',
+            domain: normalizeDomain(r.domain),
+            taskType: String(r.taskType || 'image'),
+            sourceSelector: String(r.sourceSelector || ''),
+            targetSelector: String(r.targetSelector || ''),
+            fieldName: String(r.fieldName || 'image_default')
+        });
+    }
+
+    return routes;
+}
+
+function renderCaptchaRoutes() {
+    const table = el('captcha-routes-table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    tbody.innerHTML = '';
+    if (!state.captchaRoutes.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--muted);">No captcha routes found.</td></tr>`;
+        return;
+    }
+    state.captchaRoutes.forEach((r, idx) => {
+        const canDelete = r.origin === 'local';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${escapeHtml(r.origin)}</td>
+            <td>${escapeHtml(r.domain)}</td>
+            <td>${escapeHtml(r.taskType)}</td>
+            <td style="font-family:monospace;">${escapeHtml(r.sourceSelector)}</td>
+            <td style="font-family:monospace;">${escapeHtml(r.targetSelector)}</td>
+            <td>
+                <button class="btn btn-danger cr-del-btn" data-idx="${idx}" ${canDelete ? '' : 'disabled'} style="padding:4px 8px; width:auto;">🗑️</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function renderUserscripts(scripts) {
+    const table = el('userscripts-table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    tbody.innerHTML = '';
+    if (!Array.isArray(scripts) || scripts.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--muted);">No userscripts synced from backend.</td></tr>`;
+        return;
+    }
+
+    for (const script of scripts) {
+        const meta = script.parsedMeta || {};
+        const matches = (meta.matches || []).join(', ');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="font-weight:700;">${escapeHtml(script.name || 'Unnamed')}</td>
+            <td>${escapeHtml(script.version || '0.0.0')}</td>
+            <td>${script.enabled ? 'Enabled' : 'Disabled'}</td>
+            <td style="max-width:220px; white-space:normal;">${escapeHtml(matches || '—')}</td>
+            <td>${escapeHtml(meta.runAt || 'document-idle')}</td>
+            <td><textarea readonly style="min-height:90px;">${escapeHtml(script.rawCode || '')}</textarea></td>
+        `;
+        tbody.appendChild(tr);
+    }
 }
 
 function setupDataPortability() {
@@ -145,15 +361,18 @@ el('btn-save-conn').addEventListener('click', async () => {
     const serverUrl = el('server-url').value.trim().replace(/\/$/, '');
     if (!apiKey || !serverUrl) return showMsg('conn-msg', 'API Key and URL required', false);
     
+    setLoading('btn-save-conn', true);
     await chrome.storage.local.set({ apiKey, serverUrl });
-    verifyKey(apiKey, serverUrl);
-    syncRulesFromServer(apiKey, serverUrl);
+    await verifyKey(apiKey, serverUrl);
+    await syncRulesFromServer(apiKey, serverUrl);
+    setLoading('btn-save-conn', false);
 });
 
 el('btn-test').addEventListener('click', () => {
     const apiKey = el('api-key').value.trim();
     const serverUrl = el('server-url').value.trim().replace(/\/$/, '');
-    verifyKey(apiKey, serverUrl);
+    setLoading('btn-test', true);
+    verifyKey(apiKey, serverUrl).finally(() => setLoading('btn-test', false));
 });
 
 async function verifyKey(apiKey, serverUrl) {
@@ -196,18 +415,18 @@ function renderRules() {
     filtered.forEach((r, idx) => {
         const tr = document.createElement('tr');
         
-        const site = r.site?.pattern || r.site || 'Global';
+        const site = escapeHtml(r.site?.pattern || r.site || 'Global');
         
         let targetDisplay = '';
         if (r.steps && r.steps.length > 0) {
             const s = r.steps[0].selector || {};
-            if (s.name) targetDisplay = `<span style="color:var(--success); font-weight:600;">NAME:</span> ${s.name}`;
-            else if (s.id) targetDisplay = `<span style="color:var(--primary); font-weight:600;">ID:</span> #${s.id}`;
-            else if (s.css) targetDisplay = `<span style="color:var(--warning); font-weight:600;">CSS:</span> ${s.css}`;
+            if (s.name) targetDisplay = `<span style="color:var(--success); font-weight:600;">NAME:</span> ${escapeHtml(s.name)}`;
+            else if (s.id) targetDisplay = `<span style="color:var(--primary); font-weight:600;">ID:</span> #${escapeHtml(String(s.id))}`;
+            else if (s.css) targetDisplay = `<span style="color:var(--warning); font-weight:600;">CSS:</span> ${escapeHtml(s.css)}`;
         } else {
-            if (r.name) targetDisplay = `<span style="color:var(--success); font-weight:600;">NAME:</span> ${r.name}`;
-            else if (r.elementId) targetDisplay = `<span style="color:var(--primary); font-weight:600;">ID:</span> #${r.elementId}`;
-            else if (r.selector) targetDisplay = `<span style="color:var(--warning); font-weight:600;">CSS:</span> ${r.selector}`;
+            if (r.name) targetDisplay = `<span style="color:var(--success); font-weight:600;">NAME:</span> ${escapeHtml(r.name)}`;
+            else if (r.elementId) targetDisplay = `<span style="color:var(--primary); font-weight:600;">ID:</span> #${escapeHtml(String(r.elementId))}`;
+            else if (r.selector) targetDisplay = `<span style="color:var(--warning); font-weight:600;">CSS:</span> ${escapeHtml(r.selector)}`;
         }
 
         let actionDisplay = '';
@@ -216,7 +435,7 @@ function renderRules() {
         
         if (action === 'click') actionDisplay = '<span style="color:var(--primary)">🖱️ Click</span>';
         else if (action === 'checkbox') actionDisplay = value ? '☑ Checked' : '☐ Unchecked';
-        else actionDisplay = String(value || '');
+        else actionDisplay = escapeHtml(String(value || ''));
 
         tr.innerHTML = `
             <td><input type="checkbox" class="rule-sel" data-id="${idx}"></td>
@@ -232,7 +451,7 @@ function renderRules() {
     });
 }
 
-el('rule-search')?.addEventListener('input', renderRules);
+el('rule-search')?.addEventListener('input', debounce(renderRules, 250));
 
 // Select All Logic
 el('rules-select-all')?.addEventListener('change', e => {
@@ -266,6 +485,7 @@ function openModal(idx = null) {
         el('editValue').value = '';
     }
     ruleModal.style.display = 'flex';
+    setTimeout(() => el('editSite')?.focus(), 50);
 }
 
 el('cancelModal')?.addEventListener('click', () => ruleModal.style.display = 'none');
@@ -342,7 +562,7 @@ async function syncRulesFromServer(apiKey, serverUrl) {
     if (!apiKey || !serverUrl) return;
     try {
         const resp = await fetch(`${serverUrl}/v1/autofill/sync`, {
-            headers: { 'X-API-Key': apiKey }
+            headers: { 'X-API-Key': apiKey, 'X-Device-ID': await getDeviceId() }
         });
         const data = await resp.json();
         if (data.rules) {
@@ -363,7 +583,9 @@ el('rules-sync-btn').addEventListener('click', async () => {
     if (!apiKey || !serverUrl) return showMsg('rules-msg', 'Set API credentials first', false);
 
     showMsg('rules-msg', 'Syncing…');
+    setLoading('rules-sync-btn', true);
     await syncRulesFromServer(apiKey, serverUrl);
+    setLoading('rules-sync-btn', false);
 });
 
 el('rules-propose-btn').addEventListener('click', async () => {
@@ -382,7 +604,7 @@ el('rules-propose-btn').addEventListener('click', async () => {
         try {
             const resp = await fetch(`${serverUrl}/v1/autofill/proposals`, {
                 method: 'POST',
-                headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+                headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json', 'X-Device-ID': await getDeviceId() },
                 body: JSON.stringify({
                     idempotency_key: `opt_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`,
                     submitted_at: new Date().toISOString(),
@@ -408,6 +630,114 @@ el('rules-propose-btn').addEventListener('click', async () => {
     showMsg('rules-msg', `✓ Proposed ${count} rules for review.`);
 });
 
+// ── Captcha Routes (Options Tab) ─────────────────────────────────────────────
+async function refreshCaptchaRoutesFromStorage() {
+    const data = await storageGet(['globalFieldRoutes', 'globalLocators', 'domainFieldRoutes']);
+    state.captchaRoutes = buildCaptchaRoutes(data);
+    renderCaptchaRoutes();
+}
+
+el('cr-sync-btn')?.addEventListener('click', async () => {
+    showMsg('captcha-routes-msg', 'Syncing captcha routes…');
+    const syncResp = await new Promise(resolve => chrome.runtime.sendMessage({ type: 'SYNC_NOW' }, resolve));
+    if (!syncResp || syncResp.ok === false) {
+        showMsg('captcha-routes-msg', `Sync failed: ${syncResp?.error || 'Unknown error'}`, false);
+        return;
+    }
+    await refreshCaptchaRoutesFromStorage();
+    showMsg('captcha-routes-msg', 'Captcha routes synced and refreshed.');
+});
+
+el('captcha-routes-table')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.cr-del-btn');
+    if (!btn) return;
+    const idx = Number(btn.dataset.idx);
+    const item = state.captchaRoutes[idx];
+    if (!item || item.origin !== 'local') return;
+    if (!confirm(`Remove captcha route for ${item.domain}?`)) return;
+
+    const data = await storageGet(['domainFieldRoutes']);
+    const routes = Array.isArray(data.domainFieldRoutes) ? data.domainFieldRoutes : [];
+    const next = routes.filter(r =>
+        !(normalizeDomain(r.domain) === item.domain &&
+          String(r.taskType || '') === item.taskType &&
+          String(r.sourceSelector || '') === item.sourceSelector &&
+          String(r.targetSelector || '') === item.targetSelector)
+    );
+    await chrome.storage.local.set({ domainFieldRoutes: next });
+    await refreshCaptchaRoutesFromStorage();
+    showMsg('captcha-routes-msg', 'Local captcha route removed.');
+});
+
+function startLocate(targetField) {
+    showMsg('captcha-routes-msg', 'Picker started on active tab…');
+    chrome.storage.local.set({ _popupPendingField: targetField }, () => {
+        chrome.runtime.sendMessage({ type: 'START_LOCATE', targetField }, (resp) => {
+            if (!resp || !resp.ok) {
+                showMsg('captcha-routes-msg', resp?.error || 'Failed to start picker.', false);
+            }
+        });
+    });
+}
+
+el('cr-pick-source')?.addEventListener('click', () => startLocate('source'));
+el('cr-pick-target')?.addEventListener('click', () => startLocate('target'));
+
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === 'LOCATOR_PICKED_UI') {
+        if (msg.targetField === 'source') {
+            if (el('cr-source-selector')) el('cr-source-selector').value = msg.selector || '';
+        } else {
+            if (el('cr-target-selector')) el('cr-target-selector').value = msg.selector || '';
+        }
+        showMsg('captcha-routes-msg', 'Selector captured.');
+    }
+});
+
+el('cr-save-btn')?.addEventListener('click', async () => {
+    const domain = normalizeDomain(el('cr-domain')?.value || '');
+    const taskType = String(el('cr-task-type')?.value || 'image');
+    const sourceSelector = String(el('cr-source-selector')?.value || '').trim();
+    const targetSelector = String(el('cr-target-selector')?.value || '').trim();
+
+    if (!domain || !sourceSelector || !targetSelector) {
+        showMsg('captcha-routes-msg', 'Domain, source selector and target selector are required.', false);
+        return;
+    }
+
+    const payload = {
+        domain,
+        task_type: taskType,
+        source_data_type: taskType,
+        source_selector: sourceSelector,
+        target_data_type: 'text_input',
+        target_selector: targetSelector,
+        proposed_field_name: `${taskType}_default`
+    };
+
+    showMsg('captcha-routes-msg', 'Saving captcha route…');
+    setLoading('cr-save-btn', true);
+    const resp = await new Promise(resolve => chrome.runtime.sendMessage({ type: 'PROPOSE_FIELD_MAPPING', payload }, resolve));
+    setLoading('cr-save-btn', false);
+    if (resp && resp.ok) {
+        if (taskType === 'image') {
+            chrome.runtime.sendMessage({ type: 'PROPOSE_LOCATOR', domain, img: sourceSelector, input: targetSelector }, () => {});
+        }
+        await new Promise(resolve => chrome.runtime.sendMessage({ type: 'SYNC_NOW' }, resolve));
+        await refreshCaptchaRoutesFromStorage();
+        showMsg('captcha-routes-msg', `Saved route for ${domain}.`);
+        return;
+    }
+
+    // Local fallback when server proposal fails
+    const data = await storageGet(['domainFieldRoutes']);
+    const routes = Array.isArray(data.domainFieldRoutes) ? data.domainFieldRoutes : [];
+    routes.push({ domain, taskType, sourceSelector, targetSelector, fieldName: `${taskType}_default` });
+    await chrome.storage.local.set({ domainFieldRoutes: routes });
+    await refreshCaptchaRoutesFromStorage();
+    showMsg('captcha-routes-msg', `Server save failed (${resp?.error || 'unknown'}). Stored locally.`, false);
+});
+
 // ── Service Toggles ──────────────────────────────────────────────────────────
 el('tog-captcha').addEventListener('change',  e => chrome.storage.local.set({ captchaEnabled:  e.target.checked }));
 el('tog-exam').addEventListener('change',     e => chrome.storage.local.set({ solverEnabled:   e.target.checked }));
@@ -426,12 +756,44 @@ if (el('set-skip-hidden')) el('set-skip-hidden').addEventListener('change', save
 if (el('set-skip-locked')) el('set-skip-locked').addEventListener('change', saveSettings);
 if (el('set-skip-password')) el('set-skip-password').addEventListener('change', saveSettings);
 
+if (el('tog-userscripts-enabled')) {
+    el('tog-userscripts-enabled').addEventListener('change', e => {
+        chrome.storage.local.set({ userscriptsEnabled: e.target.checked }, () => {
+            showMsg('userscripts-msg', `Userscripts ${e.target.checked ? 'enabled' : 'disabled'} globally.`);
+        });
+    });
+}
+
+if (el('userscripts-sync-btn')) {
+    el('userscripts-sync-btn').addEventListener('click', () => {
+        showMsg('userscripts-msg', 'Syncing userscripts…');
+        setLoading('userscripts-sync-btn', true);
+        chrome.runtime.sendMessage({ type: 'USERSCRIPTS_SYNC' }, async (resp) => {
+            setLoading('userscripts-sync-btn', false);
+            if (!resp || resp.ok === false) {
+                showMsg('userscripts-msg', `Sync failed: ${resp?.error || 'Unknown error'}`, false);
+                return;
+            }
+            await chrome.storage.local.set({
+                normalized_userscripts: resp.userscripts || [],
+                userscriptsEnabled: resp.userscriptsEnabled !== false
+            });
+            renderUserscripts(resp.userscripts || []);
+            showMsg('userscripts-msg', `Synced ${resp.synced || 0} userscripts from backend.`);
+        });
+    });
+}
+
 // ── Exam Tab ──────────────────────────────────────────────────────────────────
 el('btn-save-exam').addEventListener('click', () => {
+    setLoading('btn-save-exam', true);
     chrome.storage.local.set({
         autoRefresh:    el('tog-refresh').checked,
         autoScreenshot: el('tog-screenshot').checked,
-    }, () => showMsg('exam-msg', '✓ Exam settings saved'));
+    }, () => {
+        setLoading('btn-save-exam', false);
+        showMsg('exam-msg', '✓ Exam settings saved');
+    });
 });
 
 // ── Theme Management ─────────────────────────────────────────────────────────

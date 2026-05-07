@@ -5,6 +5,17 @@
     window.CaptchaModule = (() => {
         let _active = false;
         const _solvedMap = new Map(); // src → b64 prefix, per-captcha dedup
+        const _SOLVED_MAP_LIMIT = 1000;
+
+        function updateSolvedMap(key, value) {
+            if (_solvedMap.has(key)) {
+                _solvedMap.delete(key);
+            } else if (_solvedMap.size >= _SOLVED_MAP_LIMIT) {
+                const firstKey = _solvedMap.keys().next().value;
+                _solvedMap.delete(firstKey);
+            }
+            _solvedMap.set(key, value);
+        }
 
         function normHost(h) {
             return String(h || '').replace(/^www\./, '').toLowerCase();
@@ -152,7 +163,7 @@
                 return;
             }
 
-            _solvedMap.set(cacheKey, b64Key);
+            updateSolvedMap(cacheKey, b64Key);
             await window.up_humanMouse(inp);
             await humanType(inp, resp.result);
             console.log(`[Captcha] ✓ "${resp.result}" in ${resp.ms}ms (${domain})`);
@@ -176,7 +187,7 @@
                 return;
             }
 
-            _solvedMap.set(cacheKey, raw);
+            updateSolvedMap(cacheKey, raw);
             await window.up_humanMouse(target);
             await humanType(target, resp.result);
             console.log(`[Captcha] ✓ text route "${resp.result}" in ${resp.ms}ms (${domain})`);

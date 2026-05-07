@@ -5,15 +5,19 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import time
 import uuid
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlsplit
+from app.core.paths import get_project_root
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.core.database import Database
 from app.core.security import is_valid_base64
+from app.core.userscript_utils import parse_userscript_meta
 from app.models.schemas import (
     AutofillFillRequest,
     AutofillFillResponse,
@@ -21,6 +25,8 @@ from app.models.schemas import (
     AutofillRuleProposalRequest,
     AutofillRuleSyncResponse,
     AutofillRule,
+    ExamFeedbackRequest,
+    ExamFeedbackResponse,
     ExamSolveRequest,
     ExamSolveResponse,
     FieldMappingProposeRequest,
@@ -41,7 +47,7 @@ _REPORT_WINDOW_SECONDS  = 60
 _REPORT_MAX_PER_WINDOW  = 20
 # Maximum report upload size: 5 MB of raw binary (before base64 expansion ~3.75 MB)
 _REPORT_MAX_BYTES       = 5 * 1024 * 1024
-_PROJECT_ROOT  = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT  = get_project_root()
 _DATASETS_DIR  = (_PROJECT_ROOT / "backend" / "datasets").resolve()
 
 # Per-(key_id, domain) sliding-window deques for report rate limiting.
@@ -49,21 +55,6 @@ _DATASETS_DIR  = (_PROJECT_ROOT / "backend" / "datasets").resolve()
 _report_buckets: dict[tuple[int, str], deque[float]] = {}
 _REPORT_PRUNE_INTERVAL = 300  # seconds between prune passes
 _last_prune: float = 0.0
-
-
-def _normalize_domain(domain: str | None) -> str:
-    token = str(domain or "").strip().lower()
-    if not token:
-        return ""
-    if "://" in token:
-        try:
-            token = urlsplit(token).hostname or token
-        except Exception:
-            pass
-    token = token.split("/", 1)[0].split(":", 1)[0].strip(".")
-    if token.startswith("www."):
-        token = token[4:]
-    return token
 
 
 def _ensure_master_key(request: Request) -> None:
@@ -104,6 +95,83 @@ def _allow_report(key_id: int, domain: str) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SERVICE 4 — USERSCRIPTS (/v1/userscripts)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/userscripts/sync")
+async def sync_userscripts(request: Request) -> dict:
+    """
+    Sync backend-managed userscripts to the extension.
+    Source of truth:
+    - Optional index file: datasets/userscripts/index.json
+    - Fallback: all *.user.js files in datasets/userscripts
+    """
+    scripts_dir = (get_project_root() / "data" / "mappings").resolve()
+
+    scripts_data: list[dict] = []
+    index_path = scripts_dir / "index.json"
+
+    if index_path.is_file():
+        try:
+            entries = json.loads(index_path.read_text(encoding="utf-8"))
+            if not isinstance(entries, list):
+                raise ValueError("index.json must be a JSON array")
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                file_name = str(entry.get("file", "")).strip()
+                if not file_name:
+                    continue
+                try:
+                    path = (scripts_dir / file_name).resolve()
+                    if scripts_dir.resolve() not in path.parents or not path.is_file():
+                        raise ValueError(f"Invalid userscript file: {file_name}")
+                    code = path.read_text(encoding="utf-8")
+                    parsed = parse_userscript_meta(code)
+                    script_id = str(entry.get("id") or Path(file_name).stem.replace(".user", "")).strip()
+                    scripts_data.append({
+                        "id": script_id,
+                        "name": str(entry.get("name") or parsed["name"] or script_id),
+                        "version": str(entry.get("version") or parsed["version"]),
+                        "description": str(entry.get("description") or parsed["description"]),
+                        "enabled": bool(entry.get("enabled", True)),
+                        "matches": entry.get("matches") if isinstance(entry.get("matches"), list) else parsed["matches"],
+                        "exclude": entry.get("exclude") if isinstance(entry.get("exclude"), list) else parsed["exclude"],
+                        "runAt": str(entry.get("runAt") or parsed["runAt"]),
+                        "requires": entry.get("requires") if isinstance(entry.get("requires"), list) else parsed["requires"],
+                        "code": code,
+                    })
+                except Exception as e:
+                    logger.exception("Failed userscript entry %s: %s", file_name, e)
+        except Exception as e:
+            logger.exception("Failed to parse userscripts index.json: %s", e)
+    else:
+        for filepath in scripts_dir.glob("*.user.js"):
+            if not filepath.is_file():
+                continue
+            try:
+                code = filepath.read_text(encoding="utf-8")
+                parsed = parse_userscript_meta(code)
+                script_id = filepath.stem.replace(".user", "")
+                scripts_data.append({
+                    "id": script_id,
+                    "name": parsed["name"] or script_id,
+                    "version": parsed["version"],
+                    "description": parsed["description"],
+                    "enabled": True,
+                    "matches": parsed["matches"],
+                    "exclude": parsed["exclude"],
+                    "runAt": parsed["runAt"],
+                    "requires": parsed["requires"],
+                    "code": code,
+                })
+            except Exception as e:
+                logger.exception("Failed to read userscript %s: %s", filepath.name, e)
+
+    return {"scripts": scripts_data}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SERVICE 1 — TEXT CAPTCHA  (/v1/solve, /v1/report)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -113,7 +181,7 @@ async def solve(request: Request, payload: SolveRequest) -> SolveResponse:
     container     = request.app.state.container
     key_record    = request.state.api_key_record
     client_ip     = request.client.host if request.client else None
-    normalized    = _normalize_domain(payload.domain)
+    normalized    = Database._normalize_domain(payload.domain)
 
     if normalized:
         if not container.db.get_global_access():
@@ -168,7 +236,7 @@ async def report(request: Request, payload: ReportRequest) -> dict:
 
     if not is_valid_base64(payload.payload_base64):
         raise HTTPException(400, "payload_base64 invalid")
-    normalized = _normalize_domain(payload.domain)
+    normalized = Database._normalize_domain(payload.domain)
     if not normalized:
         raise HTTPException(400, "domain invalid")
     if not _allow_report(key_id=key_id, domain=normalized):
@@ -212,7 +280,7 @@ async def exam_solve(request: Request, payload: ExamSolveRequest) -> ExamSolveRe
     container  = request.app.state.container
     key_record = request.state.api_key_record
     client_ip  = request.client.host if request.client else None
-    normalized = _normalize_domain(payload.domain)
+    normalized = Database._normalize_domain(payload.domain)
 
     try:
         result = await container.exam_service.solve(
@@ -235,6 +303,8 @@ async def exam_solve(request: Request, payload: ExamSolveRequest) -> ExamSolveRe
             method=result.get("method", "none"),
             processing_ms=result.get("processing_ms", 0),
         )
+    except HTTPException:
+        raise
     except Exception as error:
         container.usage_service.record(
             key_id=int(key_record["id"]),
@@ -247,6 +317,96 @@ async def exam_solve(request: Request, payload: ExamSolveRequest) -> ExamSolveRe
         )
         logger.exception("exam_solve_failed", extra={"context": {"error": str(error)}})
         raise HTTPException(500, "exam solve failed") from error
+
+
+@router.post("/exam/feedback", response_model=ExamFeedbackResponse)
+async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamFeedbackResponse:
+    """
+    Receive per-question correctness feedback from the extension.
+    When learning is enabled and answer was correct, the question is
+    added to the self-learning database (exam_learned).
+    """
+    container  = request.app.state.container
+    key_record = request.state.api_key_record
+    db         = container.database
+
+    # Check if learning is enabled
+    learning_enabled = db.get_setting("exam.learning_enabled", "true").lower() in ("true", "1", "yes", "on")
+    if not learning_enabled:
+        return ExamFeedbackResponse(recorded=False, learned=False, message="Learning is disabled")
+
+    # Compute perceptual hash of the question image
+    try:
+        from app.services.exam_service import _b64_to_pil, _djb2_hash
+        q_img = _b64_to_pil(payload.question_image_b64)
+        question_hash = _djb2_hash(q_img)
+    except Exception as e:
+        logger.warning("exam_feedback_hash_failed", extra={"context": {"error": str(e)}})
+        return ExamFeedbackResponse(recorded=False, learned=False, message=f"Hash failed: {e}")
+
+    # Record the attempt
+    db.insert_exam_attempt(
+        question_hash=question_hash,
+        selected_option=payload.selected_option,
+        was_correct=payload.was_correct,
+        method=payload.method,
+        processing_ms=payload.processing_ms,
+        domain=payload.domain,
+        question_num=payload.question_num,
+    )
+
+    # Only learn from correct answers
+    if not payload.was_correct:
+        return ExamFeedbackResponse(recorded=True, learned=False, message="Wrong answer — not learning")
+
+    # OCR the question and options for text storage
+    try:
+        from app.services.exam_service import ExamService
+        opt_texts = []
+        for opt_b64 in payload.option_images_b64:
+            try:
+                opt_img = _b64_to_pil(opt_b64)
+                opt_texts.append(ExamService._ocr_text_static(opt_img))
+            except Exception:
+                opt_texts.append("")
+        question_text = ExamService._ocr_text_static(q_img)
+    except Exception as e:
+        logger.warning("exam_feedback_ocr_failed", extra={"context": {"error": str(e)}})
+        question_text = ""
+        opt_texts = ["", "", "", ""]
+
+    # Upsert into learned database
+    result = db.upsert_exam_learned(
+        question_hash=question_hash,
+        question_text=question_text,
+        option_1=opt_texts[0] if len(opt_texts) > 0 else "",
+        option_2=opt_texts[1] if len(opt_texts) > 1 else "",
+        option_3=opt_texts[2] if len(opt_texts) > 2 else "",
+        option_4=opt_texts[3] if len(opt_texts) > 3 else "",
+        correct_option=payload.selected_option,
+        source="exam_feedback",
+    )
+
+    logger.info("exam_feedback_learned", extra={
+        "context": {
+            "hash": question_hash[:12],
+            "action": result["action"],
+            "confidence": result["confidence"],
+            "option": payload.selected_option,
+        }
+    })
+
+    # Export learned questions to JSON (fire-and-forget)
+    try:
+        container.exam_service.export_learned_to_json()
+    except Exception as e:
+        logger.warning("exam_feedback_export_failed", extra={"context": {"error": str(e)}})
+
+    return ExamFeedbackResponse(
+        recorded=True,
+        learned=True,
+        message=f"{result['action']} (confidence: {result['confidence']:.1f})",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -262,7 +422,7 @@ async def autofill_fill(request: Request, payload: AutofillFillRequest) -> Autof
     container  = request.app.state.container
     key_record = request.state.api_key_record
     client_ip  = request.client.host if request.client else None
-    normalized = _normalize_domain(payload.domain)
+    normalized = Database._normalize_domain(payload.domain)
 
     try:
         fields_raw = [{"selector": f.selector, "label": f.label} for f in payload.fields]
@@ -281,6 +441,8 @@ async def autofill_fill(request: Request, payload: AutofillFillRequest) -> Autof
             ip=client_ip,
         )
         return AutofillFillResponse(fills=fills, domain=normalized)
+    except HTTPException:
+        raise
     except Exception as error:
         logger.exception("autofill_fill_failed", extra={"context": {"error": str(error)}})
         raise HTTPException(500, "autofill fill failed") from error
@@ -297,7 +459,7 @@ async def autofill_routes(request: Request) -> dict:
 async def autofill_domain_routes(request: Request, domain: str) -> dict:
     """Return field mapping routes for a specific domain."""
     container  = request.app.state.container
-    normalized = _normalize_domain(domain)
+    normalized = Database._normalize_domain(domain)
     return container.autofill_service.get_field_routes(normalized)
 
 
@@ -339,6 +501,8 @@ async def autofill_sync(request: Request) -> AutofillRuleSyncResponse:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SERVICE 1 — TEXT CAPTCHA  (/v1/solve, /v1/report)
+# ═══════════════════════════════════════════════════════════════════════════════
 # SERVICE 4 — AUTOMATION PAYLOADS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -350,7 +514,7 @@ async def get_automation_payload(request: Request, step_id: str) -> dict:
     if step_id not in {"step3", "step4"}:
         raise HTTPException(400, "Invalid step_id")
 
-    script_path = _PROJECT_ROOT / "backend" / "app" / "data" / "automation_scripts" / f"{step_id}.js"
+    script_path = _PROJECT_ROOT / "data" / "automation_scripts" / f"{step_id}.js"
     if not script_path.exists():
         logger.error("automation_script_not_found", extra={"context": {"path": str(script_path)}})
         raise HTTPException(404, f"Automation script for {step_id} not found")
@@ -418,7 +582,7 @@ async def get_locators(request: Request) -> dict:
 @router.get("/field-mappings")
 async def get_field_mappings(request: Request) -> dict:
     container  = request.app.state.container
-    domain     = _normalize_domain(request.query_params.get("domain", ""))
+    domain     = Database._normalize_domain(request.query_params.get("domain", ""))
     if not domain:
         return {}
     return container.db.get_domain_field_mappings(domain)

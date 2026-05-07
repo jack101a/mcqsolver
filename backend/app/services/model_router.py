@@ -24,7 +24,7 @@ class ModelRouter:
         self._loaded_models: dict[str, OnnxAIModel] = {}
 
         # Models directory resolved relative to project root, not CWD
-        self._models_dir = (_PROJECT_ROOT / "backend" / "models").resolve()
+        self._models_dir = (_PROJECT_ROOT / "data" / "models").resolve()
 
     def _get_onnx_model(self, filename: str) -> OnnxAIModel:
         """Get or initialize an ONNX model instance for a specific file."""

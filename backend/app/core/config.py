@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
+from app.core.paths import get_project_root
 
 _DEFAULT_CONFIG: dict[str, Any] = {
     "app_name": "unified-platform",
@@ -37,7 +38,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "default": "onnx",
         "fallback": "onnx",
         "allow_future_model": False,
-        "onnx_path": "backend/models/model.onnx",
+        "onnx_path": "data/models/model.onnx",
         "onnx_vocab": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
         "onnx_height": 54,
         "onnx_width": 250,
@@ -51,9 +52,9 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "litellm_model": "gemma-4-31b-it_gemini",
         "ocr_lang": "eng+hin",        # pytesseract language
         "tessdata_path": "backend/tessdata",  # path to .traineddata files
-        "question_data_path": "backend/app/data/questions.json",
-        "sign_hashes_path": "backend/app/data/sign_hashes.json",
-        "sign_labels_path": "backend/app/data/sign_label.json",
+        "question_data_path": "data/questions/questions.json",
+        "sign_hashes_path": "data/hashes/sign_hashes.json",
+        "sign_labels_path": "data/hashes/sign_label.json",
     },
     # ── WhatsApp admin alert ───────────────────────────────────────────────────
     "alerts": {
@@ -146,9 +147,9 @@ class ExamConfig(BaseModel):
     litellm_model: str = "gemma-4-31b-it_gemini"
     ocr_lang: str = "eng+hin"
     tessdata_path: str = "backend/tessdata"
-    question_data_path: str = "backend/app/data/questions.json"
-    sign_hashes_path: str = "backend/app/data/sign_hashes.json"
-    sign_labels_path: str = "backend/app/data/sign_label.json"
+    question_data_path: str = "data/questions/questions.json"
+    sign_hashes_path: str = "data/hashes/sign_hashes.json"
+    sign_labels_path: str = "data/hashes/sign_label.json"
 
 
 class AlertsConfig(BaseModel):
@@ -195,17 +196,13 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
-def _get_project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
 def _resolve_path(raw_path: str) -> Path:
-    return (_get_project_root() / raw_path).resolve()
+    return (get_project_root() / raw_path).resolve()
 
 
 @lru_cache
 def get_settings() -> Settings:
-    project_root = _get_project_root()
+    project_root = get_project_root()
     load_dotenv(project_root / "config" / ".env")
     raw_config = os.getenv("CONFIG_PATH", "backend/config/config.yaml")
     config_path = (project_root / raw_config).resolve()

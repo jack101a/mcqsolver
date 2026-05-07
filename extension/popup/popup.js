@@ -1,32 +1,35 @@
 'use strict';
 
-const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'profiles', 'activeProfileId', 'isRecording', 'stallStepScripts'];
+// Global error handler
+window.onerror = function (msg, src, line, col, err) {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background:var(--danger);color:#fff;text-align:center;padding:8px;font-size:11px;font-weight:600;';
+    banner.textContent = 'An unexpected error occurred. Please reload the popup.';
+    document.body.prepend(banner);
+    console.error('[Popup Error]', msg, src, line, col, err);
+};
+window.onunhandledrejection = function (ev) {
+    console.error('[Popup Unhandled Rejection]', ev.reason);
+};
+
+const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'userscriptsEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'profiles', 'activeProfileId', 'isRecording', 'stallStepScripts', 'theme'];
 
 function el(id) { return document.getElementById(id); }
+function escapeHtml(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
 
-function readFileText(file) {
-    if (!file) return Promise.resolve('');
-    return file.text().catch(() => '');
-}
-
-function syncFileLabel(inputId, labelId) {
-    const input = el(inputId);
-    const label = el(labelId);
-    if (!input || !label) return;
-    input.addEventListener('change', () => {
-        const file = input.files && input.files[0];
-        label.textContent = file ? file.name : 'No file selected';
-    });
-}
-
-async function collectStallScripts(prefix) {
-    // Step 3 & 4 removed from popup UI; return empty scripts
-    return {
-        step3Code: '',
-        step4Code: '',
-        step3FileName: '',
-        step4FileName: ''
-    };
+function setLoading(btnId, loading) {
+    const btn = el(btnId);
+    if (!btn) return;
+    if (loading) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.dataset.originalText = btn.textContent;
+        btn.innerHTML = '<span class="spinner"></span>' + btn.textContent;
+    } else {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        btn.textContent = btn.dataset.originalText || btn.textContent;
+    }
 }
 
 // --- View Management ---
@@ -62,6 +65,26 @@ function calculateExpiry(expiryStr) {
     }
 }
 
+async function checkServerHealth(serverUrl) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+        const resp = await fetch(`${serverUrl}/health`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (resp.ok) {
+            updateStatusDot('user-dot', 'ok');
+            updateStatusDot('master-dot', 'ok');
+        } else {
+            updateStatusDot('user-dot', 'err');
+            updateStatusDot('master-dot', 'err');
+        }
+    } catch (_) {
+        clearTimeout(timeout);
+        updateStatusDot('user-dot', 'idle');
+        updateStatusDot('master-dot', 'idle');
+    }
+}
+
 // --- Auth Logic ---
 async function handleLogin() {
     const key = el('input-key').value.trim();
@@ -72,29 +95,53 @@ async function handleLogin() {
         errNode.textContent = 'Please enter an API key.';
         return;
     }
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+        errNode.textContent = 'Please enter a valid server URL (must start with http:// or https://).';
+        return;
+    }
     
     errNode.textContent = 'Verifying...';
     errNode.style.color = 'var(--warning)';
+    setLoading('btn-auth-submit', true);
     
-    chrome.runtime.sendMessage({ type: 'VERIFY_KEY', apiKey: key, serverUrl: url }, async (resp) => {
-        if (resp?.ok) {
-            await chrome.storage.local.set({ 
-                apiKey: key, 
-                serverUrl: url,
-                isMaster: !!resp.data.is_master,
-                keyName: resp.data.key_name || 'Generic Key',
-                expiresAt: resp.data.expires_at || null
-            }, () => {
-                // Immediate Sync on Login
-                chrome.runtime.sendMessage({ type: 'SYNC_NOW' });
-            });
-            initApp();
+    const timeout = setTimeout(() => {
+        errNode.textContent = 'Request timed out. Is the server running?';
+        errNode.style.color = 'var(--danger)';
+    }, 10000);
 
-        } else {
-            errNode.textContent = resp?.error || 'Verification failed. Check key/URL.';
-            errNode.style.color = 'var(--danger)';
-        }
-    });
+    try {
+        chrome.runtime.sendMessage({ type: 'VERIFY_KEY', apiKey: key, serverUrl: url }, async (resp) => {
+            clearTimeout(timeout);
+            if (chrome.runtime.lastError) {
+                setLoading('btn-auth-submit', false);
+                errNode.textContent = 'Extension error: ' + chrome.runtime.lastError.message;
+                errNode.style.color = 'var(--danger)';
+                return;
+            }
+            if (resp?.ok) {
+                setLoading('btn-auth-submit', false);
+                await chrome.storage.local.set({ 
+                    apiKey: key, 
+                    serverUrl: url,
+                    isMaster: !!resp.data.is_master,
+                    keyName: resp.data.key_name || 'Generic Key',
+                    expiresAt: resp.data.expires_at || null
+                }, () => {
+                    chrome.runtime.sendMessage({ type: 'SYNC_NOW' });
+                });
+                initApp();
+            } else {
+                setLoading('btn-auth-submit', false);
+                errNode.textContent = resp?.error || 'Verification failed. Check key/URL.';
+                errNode.style.color = 'var(--danger)';
+            }
+        });
+    } catch (e) {
+        clearTimeout(timeout);
+        setLoading('btn-auth-submit', false);
+        errNode.textContent = 'Connection error: ' + e.message;
+        errNode.style.color = 'var(--danger)';
+    }
 }
 
 async function handleLogout() {
@@ -105,6 +152,17 @@ async function handleLogout() {
 // --- Main Init ---
 async function initApp() {
     const data = await chrome.storage.local.get(KEYS);
+    
+    // Apply saved theme
+    const theme = data.theme || 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+    const themeBtn = el('popup-theme-toggle');
+    if (themeBtn) themeBtn.textContent = theme === 'light' ? '🌙' : '☀️';
+    
+    // Connection health check
+    if (data.serverUrl && data.apiKey) {
+        checkServerHealth(data.serverUrl);
+    }
     
     if (!data.apiKey) {
         showView('view-auth');
@@ -142,7 +200,7 @@ async function initProfiles(prefix, data) {
     }
 
     // Render options
-    select.innerHTML = profiles.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    select.innerHTML = profiles.map(p => `<option value="${escapeHtml(String(p.id))}">${escapeHtml(p.name)}</option>`).join('');
     select.value = activeId;
 
     // Listeners
@@ -172,6 +230,7 @@ function setupUserUI(data) {
     el('user-tog-autofill').checked = data.autofillEnabled !== false;
     el('user-tog-captcha').checked = data.captchaEnabled !== false;
     el('user-tog-exam').checked = data.solverEnabled !== false;
+    el('user-tog-userscripts').checked = data.userscriptsEnabled !== false;
     el('user-expiry').textContent = calculateExpiry(data.expiresAt);
     el('user-key-name').textContent = data.keyName || 'Active User';
     
@@ -183,6 +242,7 @@ function setupMasterUI(data) {
     el('tog-autofill').checked = data.autofillEnabled !== false;
     el('tog-captcha').checked = data.captchaEnabled !== false;
     el('tog-exam').checked = data.solverEnabled !== false;
+    el('tog-userscripts').checked = data.userscriptsEnabled !== false;
     
     updateStatusDot('master-dot', 'ok');
     
@@ -195,8 +255,33 @@ function setupMasterUI(data) {
 }
 
 // --- Event Listeners ---
-document.addEventListener('DOMContentLoaded', () => {
-    initApp();
+document.addEventListener('DOMContentLoaded', async () => {
+    await initApp();
+    
+    // Close popup on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') window.close();
+    });
+    
+    // Offline detection
+    const offlineBanner = document.createElement('div');
+    offlineBanner.style.cssText = 'display:none;background:var(--danger);color:#fff;text-align:center;padding:6px;font-size:11px;font-weight:600;';
+    offlineBanner.textContent = 'You are offline';
+    document.body.prepend(offlineBanner);
+    window.addEventListener('offline', () => { offlineBanner.style.display = 'block'; });
+    window.addEventListener('online', () => { offlineBanner.style.display = 'none'; });
+    
+    // Theme toggle
+    const themeBtn = el('popup-theme-toggle');
+    if (themeBtn) {
+        themeBtn.addEventListener('click', async () => {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            const next = current === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', next);
+            themeBtn.textContent = next === 'light' ? '🌙' : '☀️';
+            await chrome.storage.local.set({ theme: next });
+        });
+    }
                 
 
     // Auth
@@ -208,11 +293,13 @@ document.addEventListener('DOMContentLoaded', () => {
     el('user-tog-autofill').addEventListener('change', e => chrome.storage.local.set({ autofillEnabled: e.target.checked }));
     el('user-tog-captcha').addEventListener('change', e => chrome.storage.local.set({ captchaEnabled: e.target.checked }));
     el('user-tog-exam').addEventListener('change', e => chrome.storage.local.set({ solverEnabled: e.target.checked }));
+    el('user-tog-userscripts').addEventListener('change', e => chrome.storage.local.set({ userscriptsEnabled: e.target.checked }));
 
     // Toggles - Master
     el('tog-autofill').addEventListener('change', e => chrome.storage.local.set({ autofillEnabled: e.target.checked }));
     el('tog-captcha').addEventListener('change', e => chrome.storage.local.set({ captchaEnabled: e.target.checked }));
     el('tog-exam').addEventListener('change', e => chrome.storage.local.set({ solverEnabled: e.target.checked }));
+    el('tog-userscripts').addEventListener('change', e => chrome.storage.local.set({ userscriptsEnabled: e.target.checked }));
 
     // Master Actions
     el('btn-record').addEventListener('click', async () => {
@@ -227,10 +314,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     el('btn-sync-routes').addEventListener('click', () => {
-        el('btn-sync-routes').textContent = 'Syncing...';
+        setLoading('btn-sync-routes', true);
         chrome.runtime.sendMessage({ type: 'SYNC_NOW' }, () => {
-            el('btn-sync-routes').textContent = 'Sync Complete';
-            setTimeout(() => el('btn-sync-routes').textContent = 'Sync Rules with Cloud', 2000);
+            setLoading('btn-sync-routes', false);
+            const btn = el('btn-sync-routes');
+            btn.textContent = 'Sync Complete';
+            setTimeout(() => btn.textContent = 'Sync Rules with Cloud', 2000);
         });
     });
 
@@ -302,6 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         status.textContent = 'Saving route...';
         status.style.color = 'var(--warning)';
+        setLoading('btn-save-loc', true);
 
         const fieldName = `${taskType}_default`;
         const payload = {
@@ -317,11 +407,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // Validate Selectors
         chrome.runtime.sendMessage({ type: 'VALIDATE_SELECTORS', sourceSelector, targetSelector }, (valResp) => {
             if (!valResp?.ok || !valResp.result?.ok) {
+                setLoading('btn-save-loc', false);
                 status.textContent = `Invalid selectors: ${valResp?.error || valResp?.result?.error || 'Unknown'}`;
                 status.style.color = 'var(--danger)';
                 return;
             }
             if (!valResp.result.srcCount || !valResp.result.tgtCount) {
+                setLoading('btn-save-loc', false);
                 status.textContent = `Selector not found (src:${valResp.result.srcCount}, tgt:${valResp.result.tgtCount})`;
                 status.style.color = 'var(--danger)';
                 return;
@@ -329,7 +421,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Save to server
             chrome.runtime.sendMessage({ type: 'PROPOSE_FIELD_MAPPING', payload }, (resp) => {
-                if (resp?.ok) {
+if (resp?.ok) {
+                    setLoading('btn-save-loc', false);
                     // Also propose as locator if it's an image task (backward compat)
                     if (taskType === 'image') {
                         chrome.runtime.sendMessage({ 
@@ -346,6 +439,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     el('loc-input').value = '';
                     chrome.storage.local.remove(['_locatedSource', '_locatedTarget', '_popupPendingField']);
                 } else {
+                    setLoading('btn-save-loc', false);
                     // Fallback to local
                     chrome.storage.local.get(['domainFieldRoutes'], data => {
                         const routes = Array.isArray(data.domainFieldRoutes) ? data.domainFieldRoutes : [];

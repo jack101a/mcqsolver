@@ -1,5 +1,8 @@
-import React from "react";
-import { Database } from "lucide-react";
+import React, { useEffect } from "react";
+import PropTypes from "prop-types";
+import { Database, Inbox } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { EmptyState } from "./EmptyState";
 
 export function MappingsPanel({
   mappingsByDomain,
@@ -18,16 +21,16 @@ export function MappingsPanel({
   beginAssignDomainModel,
   cancelAssignDomainModel,
   handleSaveDomainModelAssign,
-  t_textHeading,
-  t_textMuted,
-  t_borderLight,
-  t_rowHover,
-  glassPanel,
-  glassButton,
-  glassInput,
-  solidButton,
-  isDark
 }) {
+  const { isDark, t_textHeading, t_textMuted, t_borderLight, t_rowHover, glassPanel, glassButton, glassInput, solidButton } = useThemeContext();
+
+  useEffect(() => {
+    if (editingMappingId === null && assigningDomainDraft === null) return;
+    const onBefore = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBefore);
+    return () => window.removeEventListener("beforeunload", onBefore);
+  }, [editingMappingId, assigningDomainDraft]);
+
   return (
     <div className={`rounded-2xl transition-colors duration-500 overflow-hidden ${glassPanel}`}>
       <div className={`p-5 border-b flex items-center gap-3 ${t_borderLight}`}>
@@ -141,6 +144,7 @@ export function MappingsPanel({
                   ))}
                 </React.Fragment>
               ))}
+              {mappingsByDomain.length === 0 && <EmptyState icon={Inbox} title="No mappings configured" description="Create your first domain routing map below." />}
             </tbody>
           </table>
         </div>
@@ -163,3 +167,22 @@ export function MappingsPanel({
     </div>
   );
 }
+
+MappingsPanel.propTypes = {
+  mappingsByDomain: PropTypes.array.isRequired,
+  models: PropTypes.array.isRequired,
+  editingMappingId: PropTypes.number,
+  editingMappingDraft: PropTypes.object,
+  setEditingMappingDraft: PropTypes.func.isRequired,
+  assigningDomainDraft: PropTypes.object,
+  setAssigningDomainDraft: PropTypes.func.isRequired,
+  handleSaveMapping: PropTypes.func.isRequired,
+  handleRemoveMapping: PropTypes.func.isRequired,
+  handleTestMapping: PropTypes.func.isRequired,
+  beginEditMapping: PropTypes.func.isRequired,
+  cancelEditMapping: PropTypes.func.isRequired,
+  handleSaveMappingEdit: PropTypes.func.isRequired,
+  beginAssignDomainModel: PropTypes.func.isRequired,
+  cancelAssignDomainModel: PropTypes.func.isRequired,
+  handleSaveDomainModelAssign: PropTypes.func.isRequired,
+};

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from typing import Any
 
@@ -13,6 +14,23 @@ class CacheService:
     def __init__(self, ttl_seconds: int) -> None:
         self._ttl = ttl_seconds
         self._store: dict[str, tuple[float, dict[str, Any]]] = {}
+        
+        # Start background cleanup thread
+        self._cleanup_thread = threading.Thread(target=self._periodic_cleanup, daemon=True)
+        self._cleanup_thread.start()
+
+    def _periodic_cleanup(self) -> None:
+        """Background loop to evict expired entries."""
+        while True:
+            time.sleep(self._ttl)
+            self.cleanup()
+
+    def cleanup(self) -> None:
+        """Remove all expired entries from the cache."""
+        now = time.time()
+        expired = [k for k, (exp, _) in self._store.items() if now > exp]
+        for k in expired:
+            self._store.pop(k, None)
 
     def _key(
         self,

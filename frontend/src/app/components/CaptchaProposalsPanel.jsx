@@ -5,8 +5,13 @@
  *   "rules"     → field_mappings (live approved rules) – editable, deletable
  *   "proposals" → field_mapping_proposals (all statuses) – approve/reject/edit/delete
  */
-import React, { useState, useMemo } from "react";
-import { MapPin, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle, Save, X, ShieldCheck } from "lucide-react";
+import React, { useState, useMemo, useRef } from "react";
+import PropTypes from "prop-types";
+import { MapPin, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle, Save, X, ShieldCheck, Inbox } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import { useDebounce } from "../hooks/useDebounce";
+import { EmptyState } from "./EmptyState";
 
 const PROPOSAL_TABS = ["all", "pending", "approved", "rejected"];
 const STATUS_COLORS = {
@@ -16,11 +21,9 @@ const STATUS_COLORS = {
 };
 
 export function CaptchaProposalsPanel({
-  // Active rules (field_mappings)
   mappings,
   handleRemoveMapping,
   handleQuickEditMapping,
-  // Proposals (field_mapping_proposals)
   captchaProposals,
   models,
   handleApproveCaptchaProposal,
@@ -29,10 +32,8 @@ export function CaptchaProposalsPanel({
   handleBulkRejectCaptchaProposals,
   handleEditCaptchaProposal,
   handleDeleteCaptchaProposal,
-  // Theme
-  t_textHeading, t_textMuted, t_borderLight, t_rowHover,
-  glassPanel, glassButton, glassInput, badgeSuccess, isDark,
 }) {
+  const { isDark, t_textHeading, t_textMuted, t_borderLight, t_rowHover, glassPanel, glassButton, glassInput, badgeSuccess, smallGlassInput, tabButton, iconBtn, viewSwitcherBtn } = useThemeContext();
   const [view,   setView]   = useState(captchaProposals?.some(p => p.status === "pending") ? "proposals" : "rules");
   const [ptab,   setPtab]   = useState("pending"); // proposal status tab
   const [search, setSearch] = useState("");
@@ -40,28 +41,35 @@ export function CaptchaProposalsPanel({
   const [rowModel, setRowModel] = useState({});
   const [bulkModel, setBulkModel] = useState("");
   const [selected, setSelected] = useState({});
+  const searchRef = useRef(null);
+
+  useKeyboardShortcuts({
+    onSearch: () => { searchRef.current?.focus(); },
+    onEscape: () => { if (editing) setEditing(null); },
+  });
 
   const activeModels = useMemo(() => (models || []).filter(m => m.status === "active"), [models]);
   const allMappings   = mappings || [];
   const proposals     = captchaProposals || [];
   const pendingCount  = proposals.filter(p => p.status === "pending").length;
+  const debouncedSearch = useDebounce(search, 250);
 
   // ── filtered lists ───────────────────────────────────────
   const filteredRules = useMemo(() => {
-    if (!search.trim()) return allMappings;
-    const q = search.toLowerCase();
+    if (!debouncedSearch.trim()) return allMappings;
+    const q = debouncedSearch.toLowerCase();
     return allMappings.filter(m =>
       (m.domain || "").toLowerCase().includes(q) ||
       (m.field_name || "").toLowerCase().includes(q) ||
       (m.source_selector || "").toLowerCase().includes(q) ||
       (m.task_type || "").toLowerCase().includes(q)
     );
-  }, [allMappings, search]);
+  }, [allMappings, debouncedSearch]);
 
   const filteredProposals = useMemo(() => {
     let list = ptab === "all" ? proposals : proposals.filter(p => p.status === ptab);
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.toLowerCase();
       list = list.filter(p =>
         (p.domain || "").toLowerCase().includes(q) ||
         (p.proposed_field_name || "").toLowerCase().includes(q) ||
@@ -69,7 +77,7 @@ export function CaptchaProposalsPanel({
       );
     }
     return list;
-  }, [proposals, ptab, search]);
+  }, [proposals, ptab, debouncedSearch]);
 
   // ── selection ────────────────────────────────────────────
   const selCount  = Object.values(selected).filter(Boolean).length;
@@ -111,11 +119,7 @@ export function CaptchaProposalsPanel({
   };
 
   // ── class helpers ────────────────────────────────────────
-  const inp = `px-2 py-1 rounded-lg text-xs outline-none border ${isDark ? "bg-black/30 border-white/10 text-slate-200" : "bg-white/80 border-slate-200 text-slate-700"}`;
-  const viewBtn = (v, label, count) =>
-    `flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer border-b-2 ${view === v ? "border-indigo-500 text-indigo-400" : `border-transparent ${t_textMuted} hover:text-indigo-400`} ${count ? "" : ""}`;
-  const ptabCls = (t) =>
-    `px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${ptab === t ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30" : `${t_textMuted} hover:text-indigo-400`}`;
+  const inp = smallGlassInput;
 
   return (
     <div className={`rounded-2xl overflow-hidden ${glassPanel}`}>
@@ -131,16 +135,16 @@ export function CaptchaProposalsPanel({
             Active rules: {allMappings.length} &nbsp;·&nbsp; Total proposals: {proposals.length}
           </p>
         </div>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search domain / selector…"
+        <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search domain / selector…"
           className={`${inp} w-44`} />
       </div>
 
       {/* View switcher */}
       <div className={`flex border-b ${t_borderLight} bg-transparent`}>
-        <button className={viewBtn("rules", "Active Rules")} onClick={() => { setView("rules"); clearSel(); setEditing(null); }}>
+        <button className={viewSwitcherBtn(view === "rules")} onClick={() => { setView("rules"); clearSel(); setEditing(null); }}>
           <ShieldCheck size={14}/> Active Rules ({allMappings.length})
         </button>
-        <button className={viewBtn("proposals", "Proposals")} onClick={() => { setView("proposals"); clearSel(); setEditing(null); }}>
+        <button className={viewSwitcherBtn(view === "proposals")} onClick={() => { setView("proposals"); clearSel(); setEditing(null); }}>
           <MapPin size={14}/> Proposals ({proposals.length})
           {pendingCount > 0 && <span className="ml-1 px-1 text-[9px] bg-amber-500/20 text-amber-400 rounded">{pendingCount}</span>}
         </button>
@@ -198,12 +202,12 @@ export function CaptchaProposalsPanel({
                     <td className="p-3">
                       {isEdit ? (
                         <div className="flex gap-1">
-                          <button onClick={saveEdit} className="p-1.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer"><Save size={13}/></button>
-                          <button onClick={() => setEditing(null)} className="p-1.5 rounded bg-white/5 text-slate-400 hover:bg-white/10 cursor-pointer"><X size={13}/></button>
+                          <button onClick={saveEdit} className={iconBtn('success')}><Save size={13}/></button>
+                          <button onClick={() => setEditing(null)} className={iconBtn('ghost')}><X size={13}/></button>
                         </div>
                       ) : (
                         <div className="flex gap-1">
-                          <button onClick={() => startEditRule(r)} title="Edit" className="p-1.5 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 cursor-pointer"><Pencil size={13}/></button>
+                          <button onClick={() => startEditRule(r)} title="Edit" className={iconBtn('edit')}><Pencil size={13}/></button>
                           <button onClick={() => handleRemoveMapping(r.id)} title="Delete" className="p-1.5 rounded bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 cursor-pointer"><Trash2 size={13}/></button>
                         </div>
                       )}
@@ -212,7 +216,7 @@ export function CaptchaProposalsPanel({
                 );
               })}
               {filteredRules.length === 0 && (
-                <tr><td colSpan="6" className={`py-12 text-center text-sm ${t_textMuted}`}>No active rules. Approve proposals to create rules.</td></tr>
+                <EmptyState icon={Inbox} title="No active rules" description="Approve proposals to create rules." />
               )}
             </tbody>
           </table>
@@ -225,7 +229,7 @@ export function CaptchaProposalsPanel({
           {/* Status tabs */}
           <div className={`px-4 pt-3 pb-0 flex items-center gap-2 border-b ${t_borderLight}`}>
             {PROPOSAL_TABS.map(t => (
-              <button key={t} className={ptabCls(t)} onClick={() => { setPtab(t); clearSel(); }}>
+              <button key={t} className={tabButton(ptab === t)} onClick={() => { setPtab(t); clearSel(); }}>
                 {t.charAt(0).toUpperCase() + t.slice(1)}
                 <span className="ml-1 opacity-60">({t === "all" ? proposals.length : proposals.filter(p => p.status === t).length})</span>
               </button>
@@ -315,8 +319,8 @@ export function CaptchaProposalsPanel({
                       <td className="p-3">
                         {isEdit ? (
                           <div className="flex gap-1">
-                            <button onClick={saveEdit} className="p-1.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer"><Save size={13}/></button>
-                            <button onClick={() => setEditing(null)} className="p-1.5 rounded bg-white/5 text-slate-400 hover:bg-white/10 cursor-pointer"><X size={13}/></button>
+                            <button onClick={saveEdit} className={iconBtn('success')}><Save size={13}/></button>
+                            <button onClick={() => setEditing(null)} className={iconBtn('ghost')}><X size={13}/></button>
                           </div>
                         ) : (
                           <div className="flex flex-col gap-1">
@@ -328,12 +332,12 @@ export function CaptchaProposalsPanel({
                                   {activeModels.length !== 1 && <option value="">model</option>}
                                   {activeModels.map(m => <option key={m.id} value={m.id}>{m.ai_model_name}</option>)}
                                 </select>
-                                <button onClick={() => approveRow(p)} title="Approve" className="p-1.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer"><CheckCircle2 size={13}/></button>
-                                <button onClick={() => handleRejectCaptchaProposal(p.id)} title="Reject" className="p-1.5 rounded bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 cursor-pointer"><XCircle size={13}/></button>
+                                <button onClick={() => approveRow(p)} title="Approve" className={iconBtn('success')}><CheckCircle2 size={13}/></button>
+                                <button onClick={() => handleRejectCaptchaProposal(p.id)} title="Reject" className={iconBtn('danger')}><XCircle size={13}/></button>
                               </div>
                             )}
                             <div className="flex gap-1">
-                              <button onClick={() => startEditProposal(p)} title="Edit" className="p-1.5 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 cursor-pointer"><Pencil size={13}/></button>
+                              <button onClick={() => startEditProposal(p)} title="Edit" className={iconBtn('edit')}><Pencil size={13}/></button>
                               <button onClick={() => handleDeleteCaptchaProposal(p.id)} title="Delete" className="p-1.5 rounded bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 cursor-pointer"><Trash2 size={13}/></button>
                             </div>
                           </div>
@@ -343,7 +347,7 @@ export function CaptchaProposalsPanel({
                   );
                 })}
                 {filteredProposals.length === 0 && (
-                  <tr><td colSpan="7" className={`py-12 text-center text-sm ${t_textMuted}`}>No proposals match this filter.</td></tr>
+                  <EmptyState icon={Inbox} title="No proposals found" description="Try adjusting your search or status filter." />
                 )}
               </tbody>
             </table>
@@ -353,3 +357,17 @@ export function CaptchaProposalsPanel({
     </div>
   );
 }
+
+CaptchaProposalsPanel.propTypes = {
+  mappings: PropTypes.array,
+  handleRemoveMapping: PropTypes.func.isRequired,
+  handleQuickEditMapping: PropTypes.func.isRequired,
+  captchaProposals: PropTypes.array,
+  models: PropTypes.array,
+  handleApproveCaptchaProposal: PropTypes.func.isRequired,
+  handleRejectCaptchaProposal: PropTypes.func.isRequired,
+  handleBulkApproveCaptchaProposals: PropTypes.func.isRequired,
+  handleBulkRejectCaptchaProposals: PropTypes.func.isRequired,
+  handleEditCaptchaProposal: PropTypes.func.isRequired,
+  handleDeleteCaptchaProposal: PropTypes.func.isRequired,
+};

@@ -3,7 +3,7 @@ export function useTheme(isDark) {
   return {
     t_bg:          isDark ? "bg-[#020617] text-slate-200" : "bg-[#f1f5f9] text-slate-800",
     t_textHeading: isDark ? "text-white"      : "text-slate-900",
-    t_textMuted:   isDark ? "text-slate-400"  : "text-slate-500",
+    t_textMuted:   isDark ? "text-slate-300"  : "text-slate-500",
     t_rowHover:    isDark ? "hover:bg-white/[0.03]" : "hover:bg-white/50",
     t_borderLight: isDark ? "border-white/[0.05]"   : "border-black/[0.05]",
     glassPanel:  isDark
@@ -35,6 +35,31 @@ export function useTheme(isDark) {
       isDark ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20"
              : "bg-rose-100/50 hover:bg-rose-100 text-rose-600 border-rose-200"
     ].join(" "),
+    iconBtn: (color) => {
+      const colors = {
+        success: isDark ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30" : "bg-emerald-100/50 text-emerald-600 hover:bg-emerald-100",
+        danger:  isDark ? "bg-rose-500/20 text-rose-400 hover:bg-rose-500/30"   : "bg-rose-100/50 text-rose-600 hover:bg-rose-100",
+        edit:    isDark ? "bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20" : "bg-indigo-100/50 text-indigo-600 hover:bg-indigo-100",
+        ghost:   isDark ? "bg-white/5 text-slate-400 hover:bg-white/10"         : "bg-black/5 text-slate-500 hover:bg-black/10",
+      };
+      return `p-1.5 rounded cursor-pointer transition-colors ${colors[color] || colors.ghost}`;
+    },
+    smallGlassInput: [
+      "px-2 py-1 rounded-lg text-xs outline-none border transition-all",
+      isDark ? "bg-black/30 border-white/10 text-slate-200 focus:border-indigo-500/50" : "bg-white/80 border-slate-200 text-slate-700 focus:border-indigo-500/50"
+    ].join(" "),
+    tabButton: (active) =>
+      `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+        active
+          ? (isDark ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30" : "bg-indigo-100/50 text-indigo-600 border border-indigo-200")
+          : `${isDark ? "text-slate-400 hover:text-indigo-400" : "text-slate-500 hover:text-indigo-600"}`
+      }`,
+    viewSwitcherBtn: (active) =>
+      `flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer border-b-2 ${
+        active
+          ? "border-indigo-500 text-indigo-400"
+          : `border-transparent ${isDark ? "text-slate-400 hover:text-indigo-400" : "text-slate-500 hover:text-indigo-600"}`
+      }`,
     badgeSuccess: [
       "px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wider font-semibold border backdrop-blur-md",
       isDark ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"

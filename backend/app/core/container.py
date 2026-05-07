@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.core.config import Settings
 from app.core.database import Database
+from app.core.paths import get_project_root
 from app.services.alert_service import AlertService
 from app.services.autofill_service import AutofillService
 from app.services.cache_service import CacheService
@@ -55,7 +56,8 @@ def build_container(settings: Settings) -> Container:
     usage_service = UsageService(db=db)
 
     # Exam service — reads runtime config from DB (admin dashboard)
-    data_dir     = (Path(__file__).resolve().parents[3] / "backend" / "app" / "data").resolve()
+    data_dir = get_project_root() / "data"
+    data_dir = data_dir.resolve()
     exam_service = ExamService(db=db, data_dir=data_dir)
 
     # Autofill service
@@ -65,7 +67,7 @@ def build_container(settings: Settings) -> Container:
     alert_service = AlertService(db=db)
 
     # Extension service
-    root_dir = Path(__file__).resolve().parents[3]
+    root_dir = get_project_root()
     output_dir = root_dir / "backend" / "app" / "static" / "extensions"
     extension_service = ExtensionService(root_dir=root_dir, output_dir=output_dir)
 

@@ -23,7 +23,7 @@ async def export_field_mappings(request: Request):
         return denied
     container = request.app.state.container
     payload = {
-        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
         "field_mappings": container.db.get_all_field_mappings(),
     }
     return Response(
@@ -189,7 +189,7 @@ async def export_master_backup_zip(request: Request):
         zf.writestr("master-setup.json", json.dumps(payload, indent=2))
         
         # Add the models directory
-        models_dir = (_PROJECT_ROOT / "backend" / "models").resolve()
+        models_dir = (_PROJECT_ROOT / "data" / "models").resolve()
         if models_dir.exists():
             for file in models_dir.glob("*.onnx"):
                 zf.write(file, arcname=f"models/{file.name}")
@@ -222,7 +222,7 @@ async def import_master_backup_zip(
                 raise ValueError("master-setup.json not found in ZIP")
             
             # 2. Extract models
-            models_dir = (_PROJECT_ROOT / "backend" / "models").resolve()
+            models_dir = (_PROJECT_ROOT / "data" / "models").resolve()
             models_dir.mkdir(parents=True, exist_ok=True)
             for name in zf.namelist():
                 if name.startswith("models/") and name.endswith(".onnx"):

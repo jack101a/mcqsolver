@@ -10,6 +10,6 @@ else
 fi
 
 mkdir -p logs
-$PYTHON_BIN -m uvicorn app.main:app --host 0.0.0.0 --port 8080 > logs/server.log 2>&1 &
+$PYTHON_BIN -m uvicorn app.main:app --host 0.0.0.0 --port 8780 > logs/server.log 2>&1 &
 disown
-echo "Backend started on port 8080. Logs: backend/logs/server.log"
+echo "Backend started on port 8780. Logs: backend/logs/server.log"

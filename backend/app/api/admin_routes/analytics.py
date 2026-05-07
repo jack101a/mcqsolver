@@ -8,10 +8,11 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from .utils import _admin_guard, _fmt_dt
+from app.core.paths import get_project_root
 
 router = APIRouter(tags=["admin-analytics"])
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_PROJECT_ROOT = get_project_root()
 _DATASETS_DIR = (_PROJECT_ROOT / "backend" / "datasets").resolve()
 _ADMIN_UI_INDEX = (_PROJECT_ROOT / "frontend" / "dist" / "index.html").resolve()
 _IGNORED_FAILED_DOMAINS = {"localhost", "127.0.0.1", "ratetest.local"}
@@ -109,44 +110,19 @@ async def admin_dashboard(request: Request):
         return denied
     if _ADMIN_UI_INDEX.exists():
         return FileResponse(str(_ADMIN_UI_INDEX))
-    container = request.app.state.container
+    return HTMLResponse(content="<h1>Admin UI not built</h1>", status_code=404)
 
-    usage = container.db.get_usage_summary()
-    global_access = container.db.get_global_access()
-    allowed_domains = container.db.get_allowed_domains()
-    model_routes = container.db.get_all_model_routes()
-    model_registry = container.db.get_model_registry()
-    field_mappings = container.db.get_all_field_mappings()
-    field_mapping_proposals = container.db.get_pending_field_mapping_proposals()
-    labels_by_file = container.db.get_failed_payload_labels()
 
-    # Get all API keys for management
-    all_keys = container.db.get_all_api_keys()
-    for key in all_keys:
-        key["created_at_display"] = _fmt_dt(key.get("created_at"))
-        key["expires_at_display"] = _fmt_dt(key.get("expires_at"))
-        key["revoked_at_display"] = _fmt_dt(key.get("revoked_at"))
+@router.get("/{full_path:path}", response_class=HTMLResponse)
+async def admin_spa_fallback(request: Request, full_path: str):
+    """Catch-all for SPA client-side routes — serve index.html."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    if _ADMIN_UI_INDEX.exists():
+        return FileResponse(str(_ADMIN_UI_INDEX))
+    return HTMLResponse(content="<h1>Admin UI not built</h1>", status_code=404)
 
-    datasets_files = await _collect_datasets_files(container, labels_by_file)
-
-    test_status = request.query_params.get("test_status", "")
-    test_message = request.query_params.get("test_message", "")
-
-    return templates.TemplateResponse("admin.html", {
-        "request": request,
-        "usage": usage,
-        "global_access": global_access,
-        "allowed_domains": allowed_domains,
-        "model_routes": model_routes,
-        "model_registry": model_registry,
-        "field_mappings": field_mappings,
-        "field_mapping_proposals": field_mapping_proposals,
-        "api_keys": all_keys,
-        "datasets_dir": str(_DATASETS_DIR),
-        "datasets_files": datasets_files,
-        "test_status": test_status,
-        "test_message": test_message,
-    })
 
 @router.get("/api/exam/stats")
 async def get_exam_stats(request: Request) -> Any:
@@ -157,3 +133,39 @@ async def get_exam_stats(request: Request) -> Any:
     container = request.app.state.container
     stats = container.db.get_exam_stats()
     return JSONResponse(stats)
+
+
+@router.get("/api/exam/learning/stats")
+async def get_exam_learning_stats(request: Request) -> Any:
+    """Get self-learning statistics — learned questions, attempts, accuracy."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    db = container.database
+    
+    learned_stats = db.get_exam_learned_stats()
+    attempt_stats = db.get_exam_attempts_stats()
+    learning_enabled = db.get_setting("exam.learning_enabled", "true").lower() in ("true", "1", "yes", "on")
+    
+    return JSONResponse({
+        "learning_enabled": learning_enabled,
+        "learned": learned_stats,
+        "attempts": attempt_stats,
+    })
+
+
+@router.post("/api/exam/learning/toggle")
+async def toggle_exam_learning(request: Request) -> Any:
+    """Enable or disable self-learning for exam."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    db = container.database
+    
+    body = await request.json()
+    enabled = str(body.get("enabled", True)).lower() in ("true", "1", "yes", "on")
+    db.set_setting("exam.learning_enabled", "true" if enabled else "false")
+    
+    return JSONResponse({"learning_enabled": enabled, "message": f"Learning {'enabled' if enabled else 'disabled'}"})

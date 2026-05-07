@@ -13,12 +13,14 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import httpx
+import numpy as np
 from PIL import Image
 
 if TYPE_CHECKING:
@@ -87,6 +89,58 @@ def _hamming(a: str, b: str) -> int:
     return bin(diff).count("1")
 
 
+def _dct_2d(block: "np.ndarray") -> "np.ndarray":
+    """2D Discrete Cosine Transform (Type-II) using numpy."""
+    N = block.shape[0]
+    n = np.arange(N)
+    k = n.reshape((N, 1))
+    # DCT basis: cos(pi * k * (2*n + 1) / (2*N))
+    basis = np.cos(np.pi * k * (2 * n + 1) / (2 * N))
+    return basis @ block @ basis.T
+
+
+def _phash(img: Image.Image, hash_size: int = 8, highfreq_factor: int = 4) -> str:
+    """
+    Perceptual hash (pHash) using DCT.
+    Robust to resizing, compression, and minor image differences.
+    
+    Returns 64-bit hex string (hash_size=8 → 64 bits).
+    """
+    # Resize to hash_size * highfreq_factor (32x32 for default)
+    img_size = hash_size * highfreq_factor
+    img_gray = img.convert("L").resize((img_size, img_size), Image.LANCZOS)
+    pixels = np.array(img_gray, dtype=np.float64)
+    
+    # 2D DCT
+    dct = _dct_2d(pixels)
+    
+    # Extract top-left hash_size x hash_size (low frequencies)
+    dct_low = dct[:hash_size, :hash_size]
+    
+    # Median threshold
+    median = np.median(dct_low)
+    bits = (dct_low > median).flatten()
+    
+    # Convert to hex
+    hash_bytes = np.packbits(bits.astype(np.uint8))
+    return hash_bytes.tobytes().hex()[:hash_size * hash_size // 4]  # 64 bits = 16 hex chars
+
+
+def _phash_hamming_match(query_hash: str, known_hashes: dict[str, str], threshold: int = 10) -> str | None:
+    """
+    Find the best-matching known hash via Hamming distance.
+    Returns the label if distance ≤ threshold, else None.
+    """
+    best_label = None
+    best_dist = threshold + 1
+    for known_hash, label in known_hashes.items():
+        dist = _hamming(query_hash, known_hash)
+        if dist < best_dist:
+            best_dist = dist
+            best_label = label
+    return best_label if best_dist <= threshold else None
+
+
 
 
 class ExamService:
@@ -106,16 +160,28 @@ class ExamService:
         self._db       = db
         self._data_dir = data_dir
         self._http     = httpx.AsyncClient(timeout=30.0)
+        self._ocr_lock = threading.Lock()
 
         # Load static data files (these don't change at runtime)
-        q_path = data_dir / "questions.json"
+        q_path = data_dir / "questions" / "questions.json"
         self._questions: list[dict] = []
         if q_path.exists():
             with q_path.open(encoding="utf-8") as f:
                 self._questions = json.load(f)
             logger.info("exam_db_loaded", extra={"context": {"count": len(self._questions)}})
 
-        sh_path = data_dir / "sign_hashes.json"
+        # Load learned questions JSON (auto-generated from exam feedback)
+        learned_path = data_dir / "questions" / "questions_learned.json"
+        self._learned_json: list[dict] = []
+        if learned_path.exists():
+            try:
+                with learned_path.open(encoding="utf-8") as f:
+                    self._learned_json = json.load(f)
+                logger.info("exam_learned_json_loaded", extra={"context": {"count": len(self._learned_json)}})
+            except Exception as e:
+                logger.warning("exam_learned_json_load_failed", extra={"context": {"error": str(e)}})
+
+        sh_path = data_dir / "hashes" / "sign_hashes.json"
         self._sign_hashes: dict[str, str] = {}  # hash_hex → label
         if sh_path.exists():
             with sh_path.open(encoding="utf-8") as f:
@@ -130,14 +196,36 @@ class ExamService:
                     self._sign_hashes = raw
             logger.info("sign_hashes_loaded", extra={"context": {"count": len(self._sign_hashes)}})
 
-        sl_path = data_dir / "sign_label.json"
+        sl_path = data_dir / "hashes" / "sign_label.json"
         self._sign_labels: dict[str, str] = {}
         if sl_path.exists():
             with sl_path.open(encoding="utf-8") as f:
                 self._sign_labels = json.load(f)
 
+        # Load perceptual hashes (pHash) for fuzzy sign matching
+        ph_path = data_dir / "hashes" / "sign_hashes_perceptual.json"
+        self._sign_phash: dict[str, str] = {}  # phash_hex → label
+        if ph_path.exists():
+            with ph_path.open(encoding="utf-8") as f:
+                self._sign_phash = json.load(f)
+            logger.info("sign_phash_loaded", extra={"context": {"count": len(self._sign_phash)}})
+
     async def close(self) -> None:
         await self._http.aclose()
+
+    def export_learned_to_json(self) -> int:
+        """Export exam_learned SQLite table to questions_learned.json. Returns count."""
+        try:
+            entries = self._db.export_exam_learned_json()
+            learned_path = self._data_dir / "questions" / "questions_learned.json"
+            learned_path.parent.mkdir(parents=True, exist_ok=True)
+            with learned_path.open("w", encoding="utf-8") as f:
+                json.dump(entries, f, ensure_ascii=False, indent=2)
+            logger.info("exam_learned_exported", extra={"context": {"count": len(entries)}})
+            return len(entries)
+        except Exception as e:
+            logger.error("exam_learned_export_failed", extra={"context": {"error": str(e)}})
+            return 0
 
     # ── Runtime settings (from admin dashboard DB) ────────────────────────────
 
@@ -164,9 +252,36 @@ class ExamService:
     # ── Layer 1: Perceptual Hash ──────────────────────────────────────────────
 
     def _match_sign_hash(self, img: Image.Image) -> str | None:
-        img_hash = _djb2_hash(img)
-        # DJB2 is an exact content hash, no Hamming distance applicable
-        return self._sign_hashes.get(img_hash)
+        # 1. Try exact DJB2 match first (fast, no false positives)
+        djb2 = _djb2_hash(img)
+        if djb2 in self._sign_hashes:
+            label = self._sign_hashes[djb2]
+            # Auto-learn: store pHash for future fuzzy matching
+            phash = _phash(img)
+            if phash not in self._sign_phash:
+                self._sign_phash[phash] = label
+                self._save_phash_file()
+            return label
+        
+        # 2. Try perceptual hash with Hamming distance (fuzzy, robust to compression/resize)
+        if self._sign_phash:
+            phash = _phash(img)
+            label = _phash_hamming_match(phash, self._sign_phash, threshold=self.HASH_THRESHOLD)
+            if label:
+                logger.info("phash_match", extra={"context": {"label": label, "djb2": djb2[:12]}})
+                return label
+        
+        return None
+
+    def _save_phash_file(self) -> None:
+        """Persist perceptual hashes to disk."""
+        try:
+            ph_path = self._data_dir / "hashes" / "sign_hashes_perceptual.json"
+            ph_path.parent.mkdir(parents=True, exist_ok=True)
+            with ph_path.open("w", encoding="utf-8") as f:
+                json.dump(self._sign_phash, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning("phash_save_failed", extra={"context": {"error": str(e)}})
 
     # ── Layer 2: OCR → DB Lookup ──────────────────────────────────────────────
 
@@ -176,17 +291,30 @@ class ExamService:
         try:
             lang      = self._ocr_lang()
             tess_dir  = self._tessdata_dir()
-            orig_env  = os.environ.copy()
-            if tess_dir:
-                os.environ["TESSDATA_PREFIX"] = tess_dir
-            try:
-                text = pytesseract.image_to_string(img, lang=lang, config="--psm 6")
-                return text.strip()
-            finally:
-                os.environ.clear()
-                os.environ.update(orig_env)
+            
+            with self._ocr_lock:
+                orig_env  = os.environ.copy()
+                if tess_dir:
+                    os.environ["TESSDATA_PREFIX"] = tess_dir
+                try:
+                    text = pytesseract.image_to_string(img, lang=lang, config="--psm 6")
+                    return text.strip()
+                finally:
+                    os.environ.clear()
+                    os.environ.update(orig_env)
         except Exception as e:
             logger.warning("ocr_failed", extra={"context": {"error": str(e)}})
+            return ""
+
+    @staticmethod
+    def _ocr_text_static(img: Image.Image) -> str:
+        """Static OCR — for use outside ExamService instance (e.g. feedback endpoint)."""
+        if not _TESSERACT_AVAILABLE:
+            return ""
+        try:
+            text = pytesseract.image_to_string(img, lang="eng+hin", config="--psm 6")
+            return text.strip()
+        except Exception:
             return ""
 
     # ─────────────────────────────────────────────────────────────────────
@@ -410,6 +538,16 @@ class ExamService:
                 ms = int((time.perf_counter() - started) * 1000)
                 logger.info("exam_solved_hash", extra={"context": {"sign": sign_label, "option": opt_num}})
                 return {"option_number": opt_num, "answer_text": self._sign_labels.get(sign_label, sign_label), "method": "hash", "processing_ms": ms}
+
+        # Layer 1.5 — Self-Learned Database (questions learned from correct exam answers)
+        question_hash = _djb2_hash(q_img)
+        learned = self._db.exam_learned.get_by_hash(question_hash)
+        if learned and learned.get("correct_option"):
+            opt_num = int(learned["correct_option"])
+            answer  = learned.get(f"option_{opt_num}", f"Option {opt_num}")
+            ms = int((time.perf_counter() - started) * 1000)
+            logger.info("exam_solved_learned", extra={"context": {"hash": question_hash[:12], "option": opt_num, "confidence": learned.get("confidence")}})
+            return {"option_number": opt_num, "answer_text": answer, "method": "learned_db", "processing_ms": ms}
 
         # Layer 2 — OCR + DB (question text / option text / Hindi fuzzy)
         # We run OCR for question and 4 options in parallel to save time

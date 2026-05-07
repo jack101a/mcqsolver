@@ -3,13 +3,108 @@
 // Routes/locators are synced from backend every 5 min automatically — no manual refresh needed.
 
 
-// ─────────────────────────────────────────────────────────────────
-// Settings helpers
-// ─────────────────────────────────────────────────────────────────
+async function handleGMCall(msg) {
+    const { action, key, value, defaultValue, details, requestId } = msg;
+    
+    if (action === 'getValue') {
+        const data = await storageGet(['userscript_storage']);
+        const store = data.userscript_storage || {};
+        return { requestId, value: store[key] !== undefined ? store[key] : defaultValue };
+    }
+    
+    if (action === 'setValue') {
+        const data = await storageGet(['userscript_storage']);
+        const store = data.userscript_storage || {};
+        store[key] = value;
+        await storageSet({ userscript_storage: store });
+        return { requestId, ok: true };
+    }
+    
+    if (action === 'xmlhttpRequest') {
+        try {
+            const response = await fetch(details.url, {
+                method: details.method || 'GET',
+                headers: details.headers || {},
+                body: details.data || null
+            });
+            const text = await response.text();
+            return { 
+                requestId, 
+                response: {
+                    status: response.status,
+                    statusText: response.statusText,
+                    responseText: text,
+                    responseHeaders: response.headers.toString()
+                } 
+            };
+        } catch (e) {
+            return { requestId, error: e.message };
+        }
+    }
+    
+    return { requestId, error: 'Unknown GM action' };
+}
+
+function parseUserscript(code) {
+    const meta = {
+        matches: [],
+        exclude: [],
+        requires: [],
+        runAt: 'document-idle',
+        name: 'Unnamed',
+        version: '0.0',
+        description: ''
+    };
+    const match = code.match(/\/\/\s*==UserScript==([\s\S]*?)\/\/\s*==\/UserScript==/);
+    if (match) {
+        const lines = match[1].split('\n');
+        for (const line of lines) {
+            const m = line.match(/\/\/\s*@([\w-]+)\s+(.*)/);
+            if (m) {
+                const key = m[1].trim().toLowerCase();
+                const val = m[2].trim();
+                if (key === 'match' || key === 'include') meta.matches.push(val);
+                else if (key === 'exclude') meta.exclude.push(val);
+                else if (key === 'require') meta.requires.push(val);
+                else if (key === 'run-at') meta.runAt = val;
+                else if (key === 'name') meta.name = val;
+                else if (key === 'version') meta.version = val;
+                else if (key === 'description') meta.description = val;
+            }
+        }
+    }
+    return meta;
+}
+
+async function migrateUserscripts() {
+    const data = await storageGet(['userscripts', 'normalized_userscripts', 'userscriptsEnabled']);
+    if (!data.userscripts || data.normalized_userscripts) return;
+
+    console.log('[Userscript] Migrating legacy scripts...');
+    const normalized = data.userscripts.map(script => {
+        const parsedMeta = parseUserscript(script.code || '');
+        return {
+            id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `script_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: parsedMeta.name,
+            version: parsedMeta.version,
+            enabled: true,
+            source: 'backend',
+            rawCode: script.code || '',
+            parsedMeta,
+            installedAt: Date.now(),
+            updatedAt: Date.now(),
+            lastError: null
+        };
+    });
+    await storageSet({
+        normalized_userscripts: normalized,
+        userscriptsEnabled: data.userscriptsEnabled !== false
+    });
+}
 
 'use strict';
 
-const API_BASE = 'http://localhost:8080';
+const API_BASE = 'http://localhost:8780'; // Default API endpoint
 const SYNC_ALARM = 'auto_sync';
 const SYNC_PERIOD_MIN = 5;
 let cachedDeviceId = '';
@@ -17,17 +112,13 @@ let pendingDeviceIdPromise = null;
 let automationState = {
     active: false,
     tabId: null,
-    step: 0,
-    payloads: {
-        appNo: '',
-        dob: '',
-        pwd: '',
-        step3Code: '',
-        step4Code: '',
-        step3FileName: '',
-        step4FileName: ''
-    }
+    step: 1,
+    payloads: {}
 };
+
+function _persistAutomationState() {
+    chrome.storage.local.set({ _automationState: automationState });
+}
 
 // Throttle to avoid redirect loops (per tab)
 const lastRedirectAt = new Map(); // tabId -> ms
@@ -75,6 +166,68 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (url.startsWith(AUTH_BASE_URL) && url.includes('authtype=Anugyna')) {
     if (shouldRedirect(tabId)) chrome.tabs.update(tabId, { url: AUTH_TO_URL });
     return;
+  }
+
+  // Re-inject stabilization code on every page load (critical for SPA navigations)
+  try {
+    chrome.scripting.executeScript(
+      {
+        target: { tabId },
+        world: 'MAIN',
+        func: (SAFE_AUTH_URL) => {
+          const authURL = SAFE_AUTH_URL;
+          try {
+            // Kill 403.jsp if navigation goes there via history/state
+            if (location.pathname.endsWith("403.jsp")) {
+              location.replace(authURL);
+            }
+            // Patch history to block 403.jsp URLs
+            const _pushState = history.pushState;
+            history.pushState = function() {
+              if (arguments[2] && arguments[2].toString().includes("403.jsp")) arguments[2] = authURL;
+              return _pushState.apply(this, arguments);
+            };
+            const _replaceState = history.replaceState;
+            history.replaceState = function() {
+              if (arguments[2] && arguments[2].toString().includes("403.jsp")) arguments[2] = authURL;
+              return _replaceState.apply(this, arguments);
+            };
+            // Block anti-devtools event traps
+            document.addEventListener("visibilitychange", (e) => { e.stopImmediatePropagation(); }, true);
+            window.addEventListener("blur",  (e) => { e.stopImmediatePropagation(); }, true);
+            window.addEventListener("focus", (e) => { e.stopImmediatePropagation(); }, true);
+            // Filter debugger in timers
+            const _setInterval = window.setInterval;
+            window.setInterval = function(fn, delay, ...args) {
+              if (typeof fn === "string" && fn.includes("debugger")) return 0;
+              return _setInterval(fn, delay, ...args);
+            };
+            const _setTimeout = window.setTimeout;
+            window.setTimeout = function(fn, delay, ...args) {
+              if (typeof fn === "string" && fn.includes("debugger")) return 0;
+              return _setTimeout(fn, delay, ...args);
+            };
+            // Block devtools alerts only
+            window.alert = function(msg) {
+              if (msg && msg.toString().toLowerCase().includes("devtools")) return;
+            };
+            // Spoof window size probes
+            try {
+              Object.defineProperty(window, "outerHeight", { get: () => window.innerHeight + 100 });
+              Object.defineProperty(window, "outerWidth",  { get: () => window.innerWidth  + 100 });
+            } catch(e) {}
+          } catch (e) {}
+        },
+        args: [AUTH_TO_URL]
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          // Silently ignore — tab may have closed or be restricted
+        }
+      }
+    );
+  } catch (e) {
+    // Silently ignore injection errors
   }
 });
 
@@ -372,6 +525,44 @@ async function syncAll(source) {
         console.warn('[Sync] Rules failed:', e.message);
     }
 
+    // 4. Userscripts Engine Sync
+    try {
+        const data = await apiGet('/v1/userscripts/sync').catch(() => null);
+        if (data && data.scripts) {
+            const normalized = data.scripts.map(script => {
+                const parsedMeta = parseUserscript(script.code || '');
+                const runAt = script.runAt || parsedMeta.runAt || 'document-idle';
+                return {
+                    id: script.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `script_${Date.now()}`),
+                    name: script.name || parsedMeta.name || 'Unnamed',
+                    version: script.version || parsedMeta.version || '0.0.0',
+                    enabled: script.enabled !== false,
+                    source: 'backend',
+                    rawCode: script.code || '',
+                    parsedMeta: {
+                        ...parsedMeta,
+                        matches: Array.isArray(script.matches) && script.matches.length ? script.matches : parsedMeta.matches,
+                        exclude: Array.isArray(script.exclude) ? script.exclude : parsedMeta.exclude,
+                        runAt: runAt,
+                        description: script.description || parsedMeta.description || ''
+                    },
+                    installedAt: Date.now(),
+                    updatedAt: Date.now(),
+                    lastError: null
+                };
+            });
+            const existing = await storageGet(['userscriptsEnabled']);
+            await chrome.storage.local.set({
+                normalized_userscripts: normalized,
+                userscriptsEnabled: existing.userscriptsEnabled !== false
+            });
+            results.userscripts = normalized.length;
+            console.log(`[Sync:${source}] Userscripts synced — ${results.userscripts} scripts`);
+        }
+    } catch (e) {
+        console.warn('[Sync] Userscripts failed:', e.message);
+    }
+
     return { ok: true, ...results };
 }
 
@@ -399,12 +590,26 @@ chrome.alarms.onAlarm.addListener(alarm => {
 // ─────────────────────────────────────────────────────────────────
 // Sync on install / startup / service-worker wake
 // ─────────────────────────────────────────────────────────────────
+chrome.runtime.onInstalled.addListener(async () => {
+    await migrateUserscripts();
+    await syncAll('install');
+});
 
-chrome.runtime.onInstalled.addListener(() => syncAll('install'));
-chrome.runtime.onStartup.addListener(() => syncAll('startup'));
+chrome.runtime.onStartup.addListener(async () => {
+    await migrateUserscripts();
+    await syncAll('startup');
+});
 
 // Sync immediately when service worker starts (covers wake-from-sleep)
 syncAll('wake');
+
+// Restore STALL automation state if service worker was killed mid-session
+chrome.storage.local.get(['_automationState'], (stored) => {
+    if (stored._automationState?.active) {
+        automationState = stored._automationState;
+        console.log('[STALL] Restored automation state from storage, step:', automationState.step);
+    }
+});
 
 // ─────────────────────────────────────────────────────────────────
 // Broadcast storage changes to all active content scripts
@@ -430,6 +635,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // ─────────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === 'GM_API_CALL') {
+        handleGMCall(msg).then(sendResponse);
+        return true;
+    }
 
     // ── Text Captcha ────────────────────────────────────────────
     if (msg.type === 'SOLVE_CAPTCHA') {
@@ -501,10 +710,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return true;
     }
 
+    // ── Exam Feedback (self-learning) ─────────────────────────
+    if (msg.type === 'EXAM_FEEDBACK') {
+        apiPost('/v1/exam/feedback', {
+            question_image_b64: msg.questionB64,
+            option_images_b64:  msg.optionB64s,
+            selected_option:    msg.selectedOption,
+            was_correct:        msg.wasCorrect,
+            method:             msg.method,
+            processing_ms:      msg.processingMs,
+            domain:             msg.domain,
+            question_num:       msg.questionNum,
+        })
+        .then(() => console.log('[Feedback] Sent:', msg.wasCorrect ? 'CORRECT' : 'WRONG'))
+        .catch(err => console.warn('[Feedback] Failed:', err.message));
+        // Fire-and-forget — don't wait for response
+        return false;
+    }
+
     // ── Manual sync trigger (from popup/options) ─────────────────
     if (msg.type === 'SYNC_NOW') {
         syncAll('manual')
         .then(r => sendResponse({ ok: true, ...r }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+
+    if (msg.type === 'USERSCRIPTS_SYNC') {
+        syncAll('userscripts_manual')
+        .then(async (r) => {
+            const data = await storageGet(['normalized_userscripts', 'userscriptsEnabled']);
+            sendResponse({
+                ok: true,
+                synced: r.userscripts || 0,
+                userscripts: data.normalized_userscripts || [],
+                userscriptsEnabled: data.userscriptsEnabled !== false
+            });
+        })
         .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
@@ -616,8 +858,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                                 profile_scope: rule.profile_scope || 'default',
                                 priority: 100,
                                 meta: rule.meta || {}
-                            }
-                        }, data.apiKey).catch(e => console.warn('[Autofill] Auto-propose failed:', e.message));
+                             }
+                        }).catch(e => console.warn('[Autofill] Auto-propose failed:', e.message));
                     });
                 }
             }
@@ -660,21 +902,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return false;
     }
 
-    async function clearStallData() {
-        const dataToRemove = {
-            cookies: true, cache: true, cacheStorage: true,
-            localStorage: true, indexedDB: true, serviceWorkers: true,
-            fileSystems: true, webSQL: true
-        };
-        return new Promise(resolve => {
-            chrome.browsingData.remove({ since: 0 }, dataToRemove, resolve);
-        });
-    }
-
-    // ── Nuclear Restart ─────────────────────────────────────────
     if (msg.type === 'NUCLEAR_RESTART') {
         clearStallData().then(() => {
             if (automationState.active) automationState.step = 1;
+            _persistAutomationState();
             if (sender.tab?.id) {
                 chrome.tabs.update(sender.tab.id, { url: AUTH_FROM_URL });
             } else {
@@ -683,6 +914,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
         return true; // async
     }
+
 
     if (msg.type === 'START_STALL_AUTOMATION') {
         const dataToRemove = {
@@ -700,7 +932,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             automationState = {
                 active: true,
                 tabId: null,
-                step: 1, // Will advance based on DOM triggers in stall_automation.js
+                step: 1,
                 payloads: {
                     appNo: '',
                     dob: '',
@@ -711,6 +943,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     step4Code: ''
                 }
             };
+            await chrome.storage.local.set({ _automationState: automationState });
 
             // Open fresh window
             chrome.windows.create({
@@ -720,6 +953,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }, (newWin) => {
                 if (newWin && newWin.tabs && newWin.tabs[0]) {
                     automationState.tabId = newWin.tabs[0].id;
+                    _persistAutomationState();
                     sendResponse({ ok: true });
                 } else {
                     sendResponse({ ok: false, error: 'Failed to start window' });
@@ -767,6 +1001,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 ...automationState.payloads, 
                 ...msg.payloads 
             };
+            _persistAutomationState();
         }
         sendResponse({ ok: true });
         return false;
@@ -775,6 +1010,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'UPDATE_STALL_STEP') {
         if (automationState.active && automationState.tabId === sender.tab?.id) {
             automationState.step = msg.step;
+            _persistAutomationState();
             console.log(`[Automation] Advanced to Step ${msg.step}`);
 
             // Handle specific delays (e.g. 5 seconds between 3 and 4)
@@ -790,6 +1026,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg.type === 'FINISH_STALL_AUTOMATION') {
         automationState.active = false;
+        _persistAutomationState();
         chrome.storage.local.remove(['stallStepScripts']);
         console.log('[Automation] STALL session complete. MCQ Solver taking over.');
         sendResponse({ ok: true });
@@ -797,39 +1034,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     // ── Execute in MAIN world (critical for Step 3/4) ────────────
-    if (msg.type === 'SP_EXEC') {
+    if (msg.type === 'EXECUTE_IN_MAIN' || msg.type === 'SP_EXEC') {
+        const { code, name, id } = msg;
         const tabId = sender?.tab?.id;
         if (!tabId) {
             sendResponse({ ok: false, error: 'No tab ID' });
             return false;
         }
-        chrome.scripting.executeScript(
-            {
-                target: { tabId },
-                world: 'MAIN',
-                func: (code) => {
-                    try {
-                        const runner = new Function(code);
-                        const out = runner();
-                        if (out && typeof out.then === 'function') {
-                            return out.then(() => ({ ok: true })).catch(err => ({ ok: false, error: String(err) }));
-                        }
-                        return { ok: true };
-                    } catch (e) {
-                        return { ok: false, error: String(e) };
+        chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: (c, n, i) => {
+                if (i) {
+                    window.__USERSCRIPT_INSTALLED__ = window.__USERSCRIPT_INSTALLED__ || {};
+                    if (window.__USERSCRIPT_INSTALLED__[i]) {
+                        return { ok: true, alreadyInstalled: true };
                     }
-                },
-                args: [msg.code]
-            },
-            (results) => {
-                if (chrome.runtime.lastError) {
-                    sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-                } else {
-                    sendResponse((results && results[0] && results[0].result) || { ok: true });
                 }
+                try {
+                    const runner = new Function(c);
+                    runner();
+                    if (i) {
+                        window.__USERSCRIPT_INSTALLED__ = window.__USERSCRIPT_INSTALLED__ || {};
+                        window.__USERSCRIPT_INSTALLED__[i] = true;
+                    }
+                    return { ok: true };
+                } catch (e) {
+                    return { ok: false, error: String(e) };
+                }
+            },
+            args: [code, name, id]
+        }, (results) => {
+            if (chrome.runtime.lastError) {
+                sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+            } else {
+                sendResponse((results && results[0] && results[0].result) || { ok: true });
             }
-        );
-        return true; // async
+        });
+        return true;
     }
 
     // ── Open URL (same or new tab) ─────────────────────────────

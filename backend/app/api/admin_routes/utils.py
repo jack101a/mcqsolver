@@ -5,9 +5,10 @@ import hmac
 import json
 import os
 import re
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import quote_plus
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
@@ -26,20 +27,6 @@ def _safe_label(value: str) -> str:
     """Conservative token used in labeled dataset filenames."""
     normalized = re.sub(r"[^a-zA-Z0-9]+", "", value.strip())
     return (normalized[:32] or "unknown").lower()
-
-def _normalize_domain(domain: str) -> str:
-    token = str(domain or "").strip().lower()
-    if not token:
-        return ""
-    if "://" in token:
-        try:
-            token = urlsplit(token).hostname or token
-        except Exception:
-            pass
-    token = token.split("/", 1)[0].split(":", 1)[0].strip(".")
-    if token.startswith("www."):
-        token = token[4:]
-    return token
 
 def _default_field_for_task(task_type: str) -> str:
     return f"{task_type}_default"
@@ -138,5 +125,5 @@ def _write_auto_backup(container, reason: str) -> None:
         snapshots = sorted(_BACKUPS_DIR.glob("master-setup-*.json"), reverse=True)
         for stale in snapshots[20:]:
             stale.unlink(missing_ok=True)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.exception("auto_backup_failed", extra={"context": {"reason": reason, "error": str(e)}})

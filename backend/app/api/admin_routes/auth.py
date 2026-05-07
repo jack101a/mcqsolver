@@ -1,11 +1,14 @@
 from __future__ import annotations
 import hmac
+import logging
 import os
 from fastapi import APIRouter, Request, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from .utils import _admin_session_cookie, _is_request_secure
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin-auth"])
 
@@ -36,6 +39,16 @@ async def admin_login_submit(
     """Validate admin credentials and start session."""
     settings = request.app.state.container.settings
     has_user_pass = bool((settings.auth.admin_username or "").strip() and settings.auth.admin_password)
+
+    logger.info("admin_login_attempt",
+        extra={"context": {
+            "submitted_username": admin_username,
+            "submitted_password_len": len(admin_password),
+            "expected_username": settings.auth.admin_username,
+            "expected_password_len": len(settings.auth.admin_password),
+            "has_user_pass": has_user_pass,
+        }}
+    )
 
     if not has_user_pass:
         return templates.TemplateResponse(

@@ -26,6 +26,8 @@
             examComplete:  false,
             questionStart: 0,
             enabled:       true,
+            learningEnabled: true,
+            lastSolve:     null,  // { questionB64, optionB64s, selectedOption, method, processingMs }
         };
 
         let panelEls = null;
@@ -197,6 +199,28 @@
             }, 180000);
         }
 
+        function sendFeedback(wasCorrect) {
+            if (!state.learningEnabled || !state.lastSolve) return;
+            const payload = {
+                type: 'EXAM_FEEDBACK',
+                questionB64: state.lastSolve.questionB64,
+                optionB64s:  state.lastSolve.optionB64s,
+                selectedOption: state.lastSolve.selectedOption,
+                wasCorrect:  wasCorrect,
+                method:      state.lastSolve.method,
+                processingMs: state.lastSolve.processingMs,
+                domain:      window.location.hostname,
+                questionNum: state.totalSeen,
+            };
+            try {
+                chrome.runtime.sendMessage(payload);
+                console.log('[Exam] Feedback sent:', wasCorrect ? 'CORRECT' : 'WRONG', 'opt', state.lastSolve.selectedOption);
+            } catch (e) {
+                // Silent fail — feedback is best-effort
+            }
+            state.lastSolve = null; // Clear after sending
+        }
+
         async function mainLoop() {
             const qSrc = getQImage();
             
@@ -212,8 +236,15 @@
 
             if (state.prevScore >= 0 && state.totalSeen > 0) {
                 const curr = parseScore();
-                if (curr > state.prevScore) state.correctCount++;
-                else state.wrongCount++;
+                if (curr > state.prevScore) {
+                    state.correctCount++;
+                    // Send feedback: answer was CORRECT
+                    sendFeedback(true);
+                } else {
+                    state.wrongCount++;
+                    // Send feedback: answer was WRONG
+                    sendFeedback(false);
+                }
             }
             state.prevScore = parseScore();
 
@@ -248,6 +279,15 @@
                     setStatus(`✓ ${resp.data.method} (${resp.data.processing_ms}ms)`, 'ok');
                     setResult(`Option ${optNum}: ${resp.data.answer_text || ''}`);
 
+                    // Store for feedback when score is checked next cycle
+                    state.lastSolve = {
+                        questionB64: qSrc,
+                        optionB64s:  optImgs,
+                        selectedOption: optNum,
+                        method:      resp.data.method,
+                        processingMs: resp.data.processing_ms,
+                    };
+
                     const delay = window.up_rndInt(CFG.CLICK_MIN, CFG.CLICK_MAX);
                     const elapsed = Date.now() - state.questionStart;
                     if (elapsed < delay) await new Promise(r => setTimeout(r, delay - elapsed));
@@ -278,6 +318,15 @@
                     setStatus(isTimeout ? '⏰ Time Limit!' : '✗ Random Fallback', 'fail');
                     setResult(`${isTimeout ? '29s reached.' : 'No result.'} Picking random: ${randomOpt}`);
                     
+                    // Store for feedback (random fallback — likely wrong, but track anyway)
+                    state.lastSolve = {
+                        questionB64: qSrc,
+                        optionB64s:  optImgs,
+                        selectedOption: randomOpt,
+                        method:      isTimeout ? 'timeout' : 'random_fallback',
+                        processingMs: 0,
+                    };
+                    
                     const isLast = state.totalSeen >= CFG.TOTAL_QUESTIONS;
                     await clickOption(randomOpt);
                     waitAndSubmit(Date.now(), isLast);
@@ -294,7 +343,10 @@
                 const isExam = /stallexamaction|examselectaction/i.test(window.location.href);
                 if (!isExam) return;
                 // createPanel() is now called lazily in mainLoop()
-                window.up_getStorage(['solverEnabled']).then(d => state.enabled = d.solverEnabled !== false);
+                window.up_getStorage(['solverEnabled', 'learningEnabled']).then(d => {
+                    state.enabled = d.solverEnabled !== false;
+                    state.learningEnabled = d.learningEnabled !== false;
+                });
                 seedFromPage();
                 setInterval(mainLoop, CFG.POLL_MS);
                 console.log('[Exam] Module active (lazy UI)');

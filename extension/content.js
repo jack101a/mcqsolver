@@ -8,11 +8,13 @@
     window.onbeforeunload = null;
 
     // ESC fallback (close modals/alerts on some sites)
-    setInterval(function(){
-      try {
-        document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
-      } catch(e) {}
-    }, 2000);
+    if (location.hostname.includes('sarathi.parivahan.gov.in')) {
+        setInterval(function(){
+          try {
+            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+          } catch(e) {}
+        }, 2000);
+    }
   } catch(e) { console.error('non-breaking patch error', e); }
 })();
 

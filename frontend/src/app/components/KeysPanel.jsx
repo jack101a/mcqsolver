@@ -1,5 +1,8 @@
 import React from "react";
-import { Key, Plus, ShieldCheck, XCircle } from "lucide-react";
+import PropTypes from "prop-types";
+import { Key, Plus, ShieldCheck, XCircle, Inbox } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { EmptyState } from "./EmptyState";
 
 export function KeysPanel({
   apiKeys,
@@ -16,17 +19,8 @@ export function KeysPanel({
   handleToggleGlobalAccess,
   handleRemoveDomain,
   handleAddDomain,
-  t_textHeading,
-  t_textMuted,
-  t_borderLight,
-  glassPanel,
-  glassButton,
-  glassInput,
-  badgeSuccess,
-  badgeWarning,
-  dangerButton,
-  isDark
 }) {
+  const { isDark, t_textHeading, t_textMuted, t_borderLight, glassPanel, glassButton, glassInput, badgeSuccess, badgeWarning, dangerButton, solidButton } = useThemeContext();
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       {/* API Keys Container */}
@@ -54,12 +48,10 @@ export function KeysPanel({
                   {masterKeyInfo.key}
                 </div>
                 <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(masterKeyInfo.key);
-                    // Toast is handled via prop if we had it, but let's assume we just want to copy for now
-                  }}
+                  onClick={() => { navigator.clipboard.writeText(masterKeyInfo.key); }}
                   className={`p-2 rounded-lg border transition-all ${glassButton}`}
                   title="Copy Master Key"
+                  aria-label="Copy master key to clipboard"
                 >
                   <Plus size={16} className="rotate-45" /> {/* Use Plus as a placeholder for copy if needed, or just let it be */}
                 </button>
@@ -93,9 +85,9 @@ export function KeysPanel({
                     <td className={`py-3 px-2 text-xs hidden sm:table-cell ${t_textMuted}`}>{key.expires_at_display}</td>
                     <td className="py-3 px-2 text-right">
                       <div className="inline-flex items-center gap-2">
-                        <button onClick={() => handleViewStoredKey(key.id)} className={glassButton}>View</button>
+                        <button onClick={() => handleViewStoredKey(key.id)} className={glassButton} aria-label={`View key ${key.name}`}>View</button>
                         {key.enabled ? (
-                          <button onClick={() => handleRevokeKey(key.id)} className={`${dangerButton} sm:opacity-0 group-hover:opacity-100`}>Revoke</button>
+                          <button onClick={() => handleRevokeKey(key.id)} className={`${dangerButton} sm:opacity-0 group-hover:opacity-100 focus:opacity-100`}>Revoke</button>
                         ) : (
                           <>
                             <span className={`text-xs ${t_textMuted}`}>{key.revoked_at_display}</span>
@@ -106,6 +98,7 @@ export function KeysPanel({
                     </td>
                   </tr>
                 ))}
+                {apiKeys.length === 0 && <EmptyState icon={Inbox} title="No API keys" description="Create your first key below." />}
               </tbody>
             </table>
           </div>
@@ -152,7 +145,7 @@ export function KeysPanel({
             </div>
             <button
               type="submit"
-              className="w-full sm:w-auto self-end rounded-lg px-3 py-2 text-xs font-semibold bg-indigo-500 hover:bg-indigo-400 text-white transition-colors"
+              className={`${solidButton} w-full sm:w-auto self-end`}
             >
               <span className="inline-flex items-center gap-1"><Plus size={14}/> Create</span>
             </button>
@@ -187,7 +180,7 @@ export function KeysPanel({
               {access.allowed_domains.map(domain => (
                 <div key={domain} className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-colors backdrop-blur-md ${isDark ? 'bg-white/[0.05] border-white/10 hover:bg-white/[0.1]' : 'bg-white/60 border-white/80 hover:bg-white shadow-sm'}`}>
                   <span className={`font-mono text-xs ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>{domain}</span>
-                  <button onClick={() => handleRemoveDomain(domain)} className="text-gray-400 hover:text-rose-500 transition-colors"><XCircle size={14}/></button>
+                  <button onClick={() => handleRemoveDomain(domain)} className="text-gray-400 hover:text-rose-500 transition-colors" aria-label={`Remove domain ${domain}`}><XCircle size={14}/></button>
                 </div>
               ))}
             </div>
@@ -202,3 +195,20 @@ export function KeysPanel({
     </div>
   );
 }
+
+KeysPanel.propTypes = {
+  apiKeys: PropTypes.array.isRequired,
+  access: PropTypes.object.isRequired,
+  masterKeyInfo: PropTypes.object,
+  createKeyAllDomains: PropTypes.bool.isRequired,
+  setCreateKeyAllDomains: PropTypes.func.isRequired,
+  createKeyDomainSelections: PropTypes.array.isRequired,
+  toggleCreateKeyDomain: PropTypes.func.isRequired,
+  handleCreateKey: PropTypes.func.isRequired,
+  handleRevokeKey: PropTypes.func.isRequired,
+  handleDeleteRevokedKey: PropTypes.func.isRequired,
+  handleViewStoredKey: PropTypes.func.isRequired,
+  handleToggleGlobalAccess: PropTypes.func.isRequired,
+  handleRemoveDomain: PropTypes.func.isRequired,
+  handleAddDomain: PropTypes.func.isRequired,
+};

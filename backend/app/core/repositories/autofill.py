@@ -114,6 +114,8 @@ class AutofillRepository(BaseRepository):
         if not parts:
             return False
         params.append(proposal_id)
+        # SAFETY: parts only contains hardcoded column names ("rule_json", "status").
+        # status is validated against a whitelist above. Parameters use ? placeholders.
         sql = f"UPDATE autofill_rule_proposals SET {', '.join(parts)} WHERE id = ?"
         with self._lock:
             with self.connect() as conn:

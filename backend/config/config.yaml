@@ -30,7 +30,7 @@ model:
   default: onnx
   fallback: onnx
   allow_future_model: false
-  onnx_path: backend/models/model.onnx
+  onnx_path: data/models/model.onnx
   onnx_vocab: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
   onnx_height: 54
   onnx_width: 250
@@ -44,9 +44,9 @@ exam:
   litellm_model: gemma-4-31b-it_gemini
   ocr_lang: eng+hin
   tessdata_path: backend/tessdata
-  question_data_path: backend/app/data/questions.json
-  sign_hashes_path: backend/app/data/sign_hashes.json
-  sign_labels_path: backend/app/data/sign_label.json
+  question_data_path: data/questions/questions.json
+  sign_hashes_path: data/hashes/sign_hashes.json
+  sign_labels_path: data/hashes/sign_label.json
 alerts:
   whatsapp_enabled: false
   callmebot_phone: ''

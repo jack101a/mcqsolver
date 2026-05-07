@@ -2,8 +2,13 @@
  * AutofillProposalsPanel
  * UX: status tabs + search + inline rule_json edit + delete + approve/reject
  */
-import React, { useState, useMemo } from "react";
-import { Zap, Pencil, Trash2, CheckCircle2, XCircle, Save, X, ChevronDown, ChevronRight } from "lucide-react";
+import React, { useState, useMemo, useRef } from "react";
+import PropTypes from "prop-types";
+import { Zap, Pencil, Trash2, CheckCircle2, XCircle, Save, X, ChevronDown, ChevronRight, Inbox } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import { useDebounce } from "../hooks/useDebounce";
+import { EmptyState } from "./EmptyState";
 
 const STATUS_TABS = ["all", "pending", "approved", "rejected"];
 const STATUS_COLORS = {
@@ -29,22 +34,29 @@ export function AutofillProposalsPanel({
   handleApproveAutofillProposal, handleRejectAutofillProposal,
   handleBulkApproveAutofillProposals, handleBulkRejectAutofillProposals,
   handleEditAutofillProposal, handleDeleteAutofillProposal,
-  t_textHeading, t_textMuted, t_borderLight, t_rowHover,
-  glassPanel, glassButton, badgeSuccess, isDark,
 }) {
+  const { isDark, t_textHeading, t_textMuted, t_borderLight, t_rowHover, glassPanel, glassButton, badgeSuccess, smallGlassInput, tabButton, iconBtn } = useThemeContext();
   const [tab,       setTab]       = useState("pending");
   const [search,    setSearch]    = useState("");
   const [selected,  setSelected]  = useState({});
   const [expanded,  setExpanded]  = useState({});   // row JSON expand
   const [editing,   setEditing]   = useState(null); // { id, ruleStr }
+  const searchRef = useRef(null);
+
+  useKeyboardShortcuts({
+    onSearch: () => { searchRef.current?.focus(); },
+    onEscape: () => { if (editing) setEditing(null); },
+  });
 
   const proposals = autofillProposals || [];
   const pendingCount = proposals.filter(p => p.status === "pending").length;
 
+  const debouncedSearch = useDebounce(search, 250);
+
   const filtered = useMemo(() => {
     let list = tab === "all" ? proposals : proposals.filter(p => p.status === tab);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.trim().toLowerCase();
       list = list.filter(p =>
         (p.rule_json || "").toLowerCase().includes(q) ||
         (p.device_id || "").toLowerCase().includes(q) ||
@@ -52,7 +64,7 @@ export function AutofillProposalsPanel({
       );
     }
     return list;
-  }, [proposals, tab, search]);
+  }, [proposals, tab, debouncedSearch]);
 
   const selCount = Object.values(selected).filter(Boolean).length;
   const toggleSel = id => setSelected(p => ({ ...p, [id]: !p[id] }));
@@ -70,8 +82,7 @@ export function AutofillProposalsPanel({
     if (ok) setEditing(null);
   };
 
-  const inp = `px-2 py-1 rounded-lg text-xs outline-none border ${isDark ? "bg-black/30 border-white/10 text-slate-200" : "bg-white/80 border-slate-200 text-slate-700"}`;
-  const tabCls = (t) => `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${tab === t ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30" : `${t_textMuted} hover:text-indigo-400`}`;
+  const inp = smallGlassInput;
 
   return (
     <div className={`rounded-2xl overflow-hidden ${glassPanel}`}>
@@ -85,14 +96,14 @@ export function AutofillProposalsPanel({
           </h2>
           <p className={`text-[11px] ${t_textMuted}`}>All statuses — search, edit rule JSON, delete, approve or reject</p>
         </div>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search rule / device…"
-          className={`${inp} w-44`} />
+        <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search rule / device…"
+          className={`${smallGlassInput} w-44`} />
       </div>
 
       {/* Tabs */}
       <div className={`px-4 pt-3 pb-0 flex items-center gap-2 border-b ${t_borderLight}`}>
         {STATUS_TABS.map(t => (
-          <button key={t} className={tabCls(t)} onClick={() => { setTab(t); clearSel(); }}>
+          <button key={t} className={tabButton(tab === t)} onClick={() => { setTab(t); clearSel(); }}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
             <span className="ml-1 opacity-60">({t === "all" ? proposals.length : proposals.filter(p => p.status === t).length})</span>
           </button>
@@ -189,20 +200,20 @@ export function AutofillProposalsPanel({
                     <td className="p-3">
                       {isEdit ? (
                         <div className="flex gap-1">
-                          <button onClick={saveEdit} className="p-1.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer"><Save size={13}/></button>
-                          <button onClick={() => setEditing(null)} className="p-1.5 rounded bg-white/5 text-slate-400 hover:bg-white/10 cursor-pointer"><X size={13}/></button>
+                          <button onClick={saveEdit} className={iconBtn('success')}><Save size={13}/></button>
+                          <button onClick={() => setEditing(null)} className={iconBtn('ghost')}><X size={13}/></button>
                         </div>
                       ) : (
                         <div className="flex flex-col gap-1">
                           {p.status === "pending" && (
                             <div className="flex gap-1">
-                              <button onClick={() => handleApproveAutofillProposal(p.id)} title="Approve" className="p-1.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer"><CheckCircle2 size={13}/></button>
-                              <button onClick={() => handleRejectAutofillProposal(p.id)} title="Reject" className="p-1.5 rounded bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 cursor-pointer"><XCircle size={13}/></button>
+                              <button onClick={() => handleApproveAutofillProposal(p.id)} title="Approve" className={iconBtn('success')}><CheckCircle2 size={13}/></button>
+                              <button onClick={() => handleRejectAutofillProposal(p.id)} title="Reject" className={iconBtn('danger')}><XCircle size={13}/></button>
                             </div>
                           )}
                           <div className="flex gap-1">
-                            <button onClick={() => startEdit(p)} title="Edit JSON" className="p-1.5 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 cursor-pointer"><Pencil size={13}/></button>
-                            <button onClick={() => handleDeleteAutofillProposal(p.id)} title="Delete" className="p-1.5 rounded bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 cursor-pointer"><Trash2 size={13}/></button>
+                            <button onClick={() => startEdit(p)} title="Edit JSON" className={iconBtn('edit')}><Pencil size={13}/></button>
+                            <button onClick={() => handleDeleteAutofillProposal(p.id)} title="Delete" className={iconBtn('danger')}><Trash2 size={13}/></button>
                           </div>
                         </div>
                       )}
@@ -212,7 +223,7 @@ export function AutofillProposalsPanel({
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan="5" className={`py-12 text-center text-sm ${t_textMuted}`}>No proposals match this filter.</td></tr>
+              <EmptyState icon={Inbox} title="No proposals found" description="Try adjusting your search or status filter." />
             )}
           </tbody>
         </table>
@@ -220,3 +231,13 @@ export function AutofillProposalsPanel({
     </div>
   );
 }
+
+AutofillProposalsPanel.propTypes = {
+  autofillProposals: PropTypes.array,
+  handleApproveAutofillProposal: PropTypes.func.isRequired,
+  handleRejectAutofillProposal: PropTypes.func.isRequired,
+  handleBulkApproveAutofillProposals: PropTypes.func.isRequired,
+  handleBulkRejectAutofillProposals: PropTypes.func.isRequired,
+  handleEditAutofillProposal: PropTypes.func.isRequired,
+  handleDeleteAutofillProposal: PropTypes.func.isRequired,
+};

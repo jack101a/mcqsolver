@@ -28,7 +28,7 @@ Standardized monorepo with clear separation of concerns, inspired by the high-qu
 
 ## Canonical Paths
 - **Config**: `config/`
-- **Models**: `backend/models/`
+- **Models**: `data/models/`
 - **Data/DB**: `backend/logs/app.db`
 - **Extension Builds**: `scripts/package_extensions.ps1` (planned)
 

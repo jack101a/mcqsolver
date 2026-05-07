@@ -1,5 +1,8 @@
-import React from "react";
-import { BrainCircuit } from "lucide-react";
+import React, { useEffect } from "react";
+import PropTypes from "prop-types";
+import { BrainCircuit, Inbox } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { EmptyState } from "./EmptyState";
 
 export function ModelsPanel({
   models,
@@ -12,17 +15,16 @@ export function ModelsPanel({
   cancelEditModel,
   handleSaveModelEdit,
   handleDeleteModel,
-  t_textHeading,
-  t_textMuted,
-  t_borderLight,
-  glassPanel,
-  glassButton,
-  glassInput,
-  solidButton,
-  badgeSuccess,
-  badgeWarning,
-  isDark
 }) {
+  const { isDark, t_textHeading, t_textMuted, t_borderLight, glassPanel, glassButton, glassInput, solidButton, badgeSuccess, badgeWarning, dangerButton } = useThemeContext();
+
+  useEffect(() => {
+    if (editingModelId === null) return;
+    const onBefore = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBefore);
+    return () => window.removeEventListener("beforeunload", onBefore);
+  }, [editingModelId]);
+
   return (
     <div id="models-section" className={`rounded-2xl transition-colors duration-500 overflow-hidden ${glassPanel}`}>
       <div className={`p-5 border-b flex items-center gap-3 ${t_borderLight}`}>
@@ -56,14 +58,14 @@ export function ModelsPanel({
                       </span>
                     </td>
                     <td className="py-3 pl-4 text-right space-x-2">
-                      <button onClick={() => handleChangeModelState(model.id, 'production')} className={`text-[11px] px-2 py-1 rounded transition-colors backdrop-blur-md border ${isDark ? 'bg-white/[0.05] border-white/10 hover:bg-white/[0.1] text-gray-300' : 'bg-white/60 border-white/80 hover:bg-white text-slate-700 shadow-sm'}`}>Promote</button>
+                      <button onClick={() => handleChangeModelState(model.id, 'production')} className={`${glassButton} text-[11px] px-2 py-1`}>Promote</button>
                       <button
                         onClick={() => beginEditModel(model)}
-                        className={`text-[11px] px-2 py-1 rounded transition-colors backdrop-blur-md border ${isDark ? 'bg-white/[0.05] border-white/10 hover:bg-white/[0.1] text-gray-300' : 'bg-white/60 border-white/80 hover:bg-white text-slate-700 shadow-sm'}`}
+                        className={`${glassButton} text-[11px] px-2 py-1`}
                       >
                         Edit
                       </button>
-                      <button onClick={() => handleDeleteModel(model.id)} className="text-[11px] text-rose-500 hover:text-rose-600 bg-rose-500/10 px-2 py-1 rounded transition-colors backdrop-blur-md border border-rose-500/20">Del</button>
+                      <button onClick={() => handleDeleteModel(model.id)} className={`${dangerButton} text-[11px] px-2 py-1`}>Del</button>
                     </td>
                   </tr>
                   {editingModelId === model.id && editingModelDraft && (
@@ -94,6 +96,7 @@ export function ModelsPanel({
                   )}
                 </React.Fragment>
               ))}
+              {models.length === 0 && <EmptyState icon={Inbox} title="No models registered" description="Upload an ONNX model to get started." />}
             </tbody>
           </table>
         </div>
@@ -125,3 +128,16 @@ export function ModelsPanel({
     </div>
   );
 }
+
+ModelsPanel.propTypes = {
+  models: PropTypes.array.isRequired,
+  editingModelId: PropTypes.number,
+  editingModelDraft: PropTypes.object,
+  setEditingModelDraft: PropTypes.func.isRequired,
+  handleRegisterModel: PropTypes.func.isRequired,
+  handleChangeModelState: PropTypes.func.isRequired,
+  beginEditModel: PropTypes.func.isRequired,
+  cancelEditModel: PropTypes.func.isRequired,
+  handleSaveModelEdit: PropTypes.func.isRequired,
+  handleDeleteModel: PropTypes.func.isRequired,
+};

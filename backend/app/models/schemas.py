@@ -26,6 +26,7 @@ class SolveResponse(BaseModel):
     result: str
     processing_ms: int
     cached: bool = False
+    model_used: str | None = None
 
 
 # ── Exam ──────────────────────────────────────────────────────────────────────
@@ -41,6 +42,24 @@ class ExamSolveResponse(BaseModel):
     answer_text: str | None
     method: str                   # "hash" | "ocr_db" | "llm" | "none"
     processing_ms: int
+
+
+class ExamFeedbackRequest(BaseModel):
+    """Feedback from extension after answer submission — for self-learning."""
+    question_image_b64: str = Field(min_length=10)
+    option_images_b64: list[str] = Field(min_length=2, max_length=4)
+    selected_option: int = Field(ge=1, le=4)
+    was_correct: bool
+    method: str | None = None
+    processing_ms: int = 0
+    domain: str | None = None
+    question_num: int | None = None
+
+
+class ExamFeedbackResponse(BaseModel):
+    recorded: bool
+    learned: bool = False  # True if added/updated in exam_learned
+    message: str = ""
 
 
 # ── Autofill ──────────────────────────────────────────────────────────────────

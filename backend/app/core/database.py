@@ -15,6 +15,8 @@ from app.core.repositories.api_keys import APIKeyRepository
 from app.core.repositories.models import ModelRepository
 from app.core.repositories.autofill import AutofillRepository
 from app.core.repositories.exam import ExamRepository
+from app.core.repositories.exam_attempts import ExamAttemptsRepository
+from app.core.repositories.exam_learned import ExamLearnedRepository
 from app.core.repositories.training import TrainingRepository
 from app.core.repositories.settings import SettingsRepository
 
@@ -32,6 +34,8 @@ class Database:
         self.models = ModelRepository(self)
         self.autofill = AutofillRepository(self)
         self.exam = ExamRepository(self)
+        self.exam_attempts = ExamAttemptsRepository(self)
+        self.exam_learned = ExamLearnedRepository(self)
         self.training = TrainingRepository(self)
         self.settings = SettingsRepository(self)
 
@@ -290,6 +294,34 @@ class Database:
                         approved_rule_id TEXT,
                         created_at       TEXT NOT NULL
                     );
+
+                    CREATE TABLE IF NOT EXISTS exam_attempts (
+                        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                        question_hash    TEXT NOT NULL,
+                        selected_option  INTEGER NOT NULL,
+                        was_correct      INTEGER NOT NULL,
+                        method           TEXT,
+                        processing_ms    INTEGER DEFAULT 0,
+                        domain           TEXT,
+                        question_num     INTEGER,
+                        created_at       TEXT NOT NULL
+                    );
+
+                    CREATE TABLE IF NOT EXISTS exam_learned (
+                        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                        question_hash    TEXT NOT NULL UNIQUE,
+                        question_text    TEXT DEFAULT '',
+                        option_1         TEXT DEFAULT '',
+                        option_2         TEXT DEFAULT '',
+                        option_3         TEXT DEFAULT '',
+                        option_4         TEXT DEFAULT '',
+                        correct_option   INTEGER NOT NULL,
+                        confidence       REAL NOT NULL DEFAULT 0.8,
+                        seen_count       INTEGER NOT NULL DEFAULT 1,
+                        first_seen       TEXT NOT NULL,
+                        last_seen        TEXT NOT NULL,
+                        source           TEXT NOT NULL DEFAULT 'exam_feedback'
+                    );
                     """
                 )
                 # ── Column migrations (idempotent) ─────────────────────────
@@ -336,6 +368,12 @@ class Database:
                     conn.execute("ALTER TABLE field_mappings ADD COLUMN target_data_type TEXT NOT NULL DEFAULT 'text'")
                 if "target_selector" not in mapping_columns:
                     conn.execute("ALTER TABLE field_mappings ADD COLUMN target_selector TEXT NOT NULL DEFAULT ''")
+
+                # ── Performance indexes ──────────────────────────────
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_task_status ON usage_events(task_type, status)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_key_id ON usage_events(key_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_field_proposals_status ON field_mapping_proposals(status)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_autofill_proposals_status ON autofill_rule_proposals(status, created_at)")
 
                 conn.execute("INSERT OR IGNORE INTO access_control (key, value) VALUES ('global_access', 'true')")
                 conn.commit()
@@ -420,6 +458,18 @@ class Database:
 
     # Exam
     def get_exam_stats(self, *args, **kwargs): return self.exam.get_exam_stats(*args, **kwargs)
+
+    # Exam Attempts (self-learning feedback)
+    def insert_exam_attempt(self, *args, **kwargs): return self.exam_attempts.insert_attempt(*args, **kwargs)
+    def get_exam_attempts_by_hash(self, *args, **kwargs): return self.exam_attempts.get_attempts_by_hash(*args, **kwargs)
+    def get_exam_attempts_stats(self, *args, **kwargs): return self.exam_attempts.get_stats(*args, **kwargs)
+
+    # Exam Learned (self-learning question bank)
+    def upsert_exam_learned(self, *args, **kwargs): return self.exam_learned.upsert_learned(*args, **kwargs)
+    def get_exam_learned_by_hash(self, *args, **kwargs): return self.exam_learned.get_by_hash(*args, **kwargs)
+    def get_all_exam_learned(self, *args, **kwargs): return self.exam_learned.get_all_learned(*args, **kwargs)
+    def get_exam_learned_stats(self, *args, **kwargs): return self.exam_learned.get_stats(*args, **kwargs)
+    def export_exam_learned_json(self, *args, **kwargs): return self.exam_learned.export_to_json(*args, **kwargs)
 
     # Training
     def insert_retrain_sample(self, *args, **kwargs): return self.training.insert_retrain_sample(*args, **kwargs)

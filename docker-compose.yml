@@ -25,7 +25,9 @@ services:
       - CONFIG_PATH=backend/config/config.yaml
     volumes:
       - ./backend/logs:/app/backend/logs
-      - ./backend/models:/app/backend/models
-      - ./backend/app/data:/app/backend/app/data
+      - ./data/models:/app/data/models
+      - ./data/questions:/app/data/questions
+      - ./data/hashes:/app/data/hashes
+      - ./data/mappings:/app/data/mappings
     ports:
       - "${PORT:-8080}:8080"

@@ -1,26 +1,21 @@
-/** useKeyHandlers — API key CRUD operations. */
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiPost } from '../../api/client';
+import { queryKeys } from '../../api/queries';
+
 export function useKeyHandlers({
-  postForm, fetchBootstrap, showToast,
+  showToast,
   rememberedKeys, setRememberedKeys,
   setCreatedKeyModal,
   createKeyAllDomains, setCreateKeyAllDomains,
   createKeyDomainSelections, setCreateKeyDomainSelections,
 }) {
-  const handleCreateKey = async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    try {
-      const response = await postForm("/admin/api/keys/create", {
-        key_name: fd.get("key_name"),
-        expiry_days: Number(fd.get("expiry_days") || 30),
-        all_domains: createKeyAllDomains ? "on" : "",
-        allowed_domains_csv: createKeyAllDomains ? "" : createKeyDomainSelections.join(","),
-        requests_per_minute: Number(fd.get("requests_per_minute") || 0),
-        burst: Number(fd.get("burst") || 0),
-        key_type: fd.get("key_type") || "user",
-      });
-      const payload = await response.json();
-      await fetchBootstrap();
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap });
+
+  const createKey = useMutation({
+    mutationFn: (payload) => apiPost("/admin/api/keys/create", payload),
+    onSuccess: (payload, _vars, { e }) => {
+      invalidate();
       if (payload.key_id && payload.api_key) {
         setRememberedKeys(prev => ({ ...prev, [String(payload.key_id)]: payload.api_key }));
       }
@@ -29,7 +24,22 @@ export function useKeyHandlers({
       setCreateKeyAllDomains(true);
       setCreateKeyDomainSelections([]);
       showToast("API key created.");
-    } catch { showToast("Failed to create key", "error"); }
+    },
+    onError: () => showToast("Failed to create key", "error"),
+  });
+
+  const handleCreateKey = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    createKey.mutate({
+      key_name: fd.get("key_name"),
+      expiry_days: Number(fd.get("expiry_days") || 30),
+      all_domains: createKeyAllDomains ? "on" : "",
+      allowed_domains_csv: createKeyAllDomains ? "" : createKeyDomainSelections.join(","),
+      requests_per_minute: Number(fd.get("requests_per_minute") || 0),
+      burst: Number(fd.get("burst") || 0),
+      key_type: fd.get("key_type") || "user",
+    }, { e });
   };
 
   const handleCopyKey = async (keyValue) => {
@@ -49,23 +59,30 @@ export function useKeyHandlers({
     setCreatedKeyModal({ open: true, keyId, keyValue: value });
   };
 
+  const revokeKey = useMutation({
+    mutationFn: (id) => apiPost("/admin/keys/revoke", { key_id: id }),
+    onSuccess: (_, id) => { invalidate(); showToast(`Key #${id} revoked.`, "error"); },
+    onError: () => showToast("Failed to revoke key", "error"),
+  });
+
   const handleRevokeKey = async (id) => {
     if (!window.confirm("Revoke this API Key? Client access will be cut immediately.")) return;
-    try {
-      await postForm("/admin/keys/revoke", { key_id: id });
-      await fetchBootstrap();
-      showToast(`Key #${id} revoked.`, "error");
-    } catch { showToast("Failed to revoke key", "error"); }
+    revokeKey.mutate(id);
   };
+
+  const deleteRevokedKey = useMutation({
+    mutationFn: (id) => apiPost("/admin/keys/delete", { key_id: id }),
+    onSuccess: (_, id) => {
+      setRememberedKeys(prev => { const next = { ...prev }; delete next[String(id)]; return next; });
+      invalidate();
+      showToast(`Key #${id} deleted.`, "error");
+    },
+    onError: () => showToast("Only revoked keys can be deleted", "error"),
+  });
 
   const handleDeleteRevokedKey = async (id) => {
     if (!window.confirm("Delete this revoked key entry? This cannot be undone.")) return;
-    try {
-      await postForm("/admin/keys/delete", { key_id: id });
-      setRememberedKeys(prev => { const next = { ...prev }; delete next[String(id)]; return next; });
-      await fetchBootstrap();
-      showToast(`Key #${id} deleted.`, "error");
-    } catch { showToast("Only revoked keys can be deleted", "error"); }
+    deleteRevokedKey.mutate(id);
   };
 
   const toggleCreateKeyDomain = (domain) => {

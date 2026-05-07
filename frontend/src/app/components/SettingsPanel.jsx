@@ -1,5 +1,9 @@
-import React, { useState, useEffect } from "react";
-import { Download, Upload, Save, Bell, Globe, Shield, Database, Loader2 } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import PropTypes from "prop-types";
+import { Download, Upload, Save, Bell, Globe, Shield, Loader2, Inbox } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { apiGet, apiPostJson } from "../../api/client";
+import { EmptyState } from "./EmptyState";
 
 export function SettingsPanel({
   apiKeys,
@@ -32,20 +36,21 @@ export function SettingsPanel({
   handleImportFullBackup,
   handleCloudBackupPush,
   handleCloudBackupPull,
-  t_textHeading,
-  t_textMuted,
-  t_borderLight,
-  t_rowHover,
-  glassPanel,
-  glassButton,
-  glassInput,
-  badgeSuccess,
-  isDark,
   showToast
 }) {
+  const { isDark, t_textHeading, t_textMuted, t_borderLight, t_rowHover, glassPanel, glassButton, glassInput, badgeSuccess, solidButton } = useThemeContext();
   const [globalSettings, setGlobalSettings] = useState({});
   const [loadingGlobal, setLoadingGlobal] = useState(true);
   const [savingGlobal, setSavingGlobal] = useState(false);
+  const initialGlobalSettings = useRef(null);
+
+  useEffect(() => {
+    const isDirty = initialGlobalSettings.current !== null && JSON.stringify(globalSettings) !== JSON.stringify(initialGlobalSettings.current);
+    if (!isDirty) return;
+    const onBefore = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBefore);
+    return () => window.removeEventListener("beforeunload", onBefore);
+  }, [globalSettings]);
 
   useEffect(() => {
     fetchGlobalSettings();
@@ -53,15 +58,13 @@ export function SettingsPanel({
 
   const fetchGlobalSettings = async () => {
     try {
-      const resp = await fetch("/admin/api/settings", { credentials: "include" });
-      if (resp.ok) {
-        const data = await resp.json();
-        const map = {};
-        data.settings.forEach(s => {
-          map[s.key] = s.value;
-        });
-        setGlobalSettings(map);
-      }
+      const data = await apiGet("/admin/api/settings");
+      const map = {};
+      data.settings.forEach(s => {
+        map[s.key] = s.value;
+      });
+      setGlobalSettings(map);
+      initialGlobalSettings.current = JSON.parse(JSON.stringify(map));
     } catch (e) {
       console.error("Failed to fetch global settings", e);
     } finally {
@@ -73,17 +76,8 @@ export function SettingsPanel({
     e.preventDefault();
     setSavingGlobal(true);
     try {
-      const resp = await fetch("/admin/api/settings/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: globalSettings }),
-        credentials: "include"
-      });
-      if (resp.ok) {
-        showToast("System settings updated.");
-      } else {
-        showToast("Failed to save settings", "error");
-      }
+      await apiPostJson("/admin/api/settings/bulk", { settings: globalSettings });
+      showToast("System settings updated.");
     } catch (e) {
       showToast("Error saving settings", "error");
     } finally {
@@ -112,7 +106,7 @@ export function SettingsPanel({
           <button 
             onClick={handleSaveGlobal} 
             disabled={savingGlobal || loadingGlobal}
-            className={`rounded-xl px-4 py-2 text-sm font-medium transition-all backdrop-blur-md flex items-center justify-center gap-2 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/40`}
+            className={solidButton}
           >
             {savingGlobal ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
             {savingGlobal ? "Saving..." : "Save System Config"}
@@ -325,7 +319,7 @@ export function SettingsPanel({
                   </td>
                 </tr>
               ))}
-              {apiKeys.length === 0 && <tr><td colSpan="4" className="py-8 text-center opacity-40">No API keys registered.</td></tr>}
+              {apiKeys.length === 0 && <EmptyState icon={Inbox} title="No API keys registered" />}
             </tbody>
           </table>
         </div>
@@ -333,3 +327,37 @@ export function SettingsPanel({
     </div>
   );
 }
+
+SettingsPanel.propTypes = {
+  apiKeys: PropTypes.array.isRequired,
+  access: PropTypes.object.isRequired,
+  settingsKeyId: PropTypes.string,
+  settingsAllDomains: PropTypes.bool.isRequired,
+  setSettingsAllDomains: PropTypes.func.isRequired,
+  settingsDomainSelections: PropTypes.array.isRequired,
+  toggleSettingsDomainSelection: PropTypes.func.isRequired,
+  settingsKeyRpm: PropTypes.number.isRequired,
+  setSettingsKeyRpm: PropTypes.func.isRequired,
+  settingsKeyBurst: PropTypes.number.isRequired,
+  setSettingsKeyBurst: PropTypes.func.isRequired,
+  settingsCustomDomain: PropTypes.string.isRequired,
+  setSettingsCustomDomain: PropTypes.func.isRequired,
+  cloudBackupConfigured: PropTypes.bool.isRequired,
+  handleSettingsKeyChange: PropTypes.func.isRequired,
+  handleSaveKeyAccessSettings: PropTypes.func.isRequired,
+  handleAddSettingsCustomDomain: PropTypes.func.isRequired,
+  handleSaveKeyRateLimitSettings: PropTypes.func.isRequired,
+  handleCreateBackupNow: PropTypes.func.isRequired,
+  handleRestoreLatestBackup: PropTypes.func.isRequired,
+  handleExportMasterSetup: PropTypes.func.isRequired,
+  handleImportMasterSetup: PropTypes.func.isRequired,
+  handleExportAutofill: PropTypes.func.isRequired,
+  handleImportAutofill: PropTypes.func.isRequired,
+  handleExportCaptcha: PropTypes.func.isRequired,
+  handleImportCaptcha: PropTypes.func.isRequired,
+  handleExportFullBackup: PropTypes.func.isRequired,
+  handleImportFullBackup: PropTypes.func.isRequired,
+  handleCloudBackupPush: PropTypes.func.isRequired,
+  handleCloudBackupPull: PropTypes.func.isRequired,
+  showToast: PropTypes.func.isRequired,
+};

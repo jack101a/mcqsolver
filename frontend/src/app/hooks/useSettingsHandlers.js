@@ -1,6 +1,9 @@
-/** useSettingsHandlers — key settings, domain access, backups, global toggle. */
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiPost, apiPostJson, apiPostForm } from '../../api/client';
+import { queryKeys } from '../../api/queries';
+
 export function useSettingsHandlers({
-  postForm, fetchBootstrap, showToast,
+  showToast,
   apiKeys,
   settingsKeyId, setSettingsKeyId,
   settingsAllDomains, setSettingsAllDomains,
@@ -10,6 +13,9 @@ export function useSettingsHandlers({
   settingsCustomDomain, setSettingsCustomDomain,
   access,
 }) {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap });
+
   const handleSettingsKeyChange = (nextId) => {
     setSettingsKeyId(String(nextId));
     const key = apiKeys.find(k => String(k.id) === String(nextId));
@@ -20,32 +26,36 @@ export function useSettingsHandlers({
     setSettingsKeyBurst(Number(key.rate_limit?.burst || 10));
   };
 
-  const handleSaveKeyAccessSettings = async (e) => {
+  const saveKeyAccess = useMutation({
+    mutationFn: () => apiPost("/admin/keys/access/update", {
+      key_id: Number(settingsKeyId),
+      all_domains: settingsAllDomains ? "on" : "",
+      allowed_domains_csv: settingsAllDomains ? "" : settingsDomainSelections.join(","),
+    }),
+    onSuccess: () => { invalidate(); showToast("Key domain access updated."); },
+    onError: () => showToast("Failed to update key access", "error"),
+  });
+
+  const handleSaveKeyAccessSettings = (e) => {
     e.preventDefault();
     if (!settingsKeyId) return;
-    try {
-      await postForm("/admin/keys/access/update", {
-        key_id: Number(settingsKeyId),
-        all_domains: settingsAllDomains ? "on" : "",
-        allowed_domains_csv: settingsAllDomains ? "" : settingsDomainSelections.join(","),
-      });
-      await fetchBootstrap();
-      showToast("Key domain access updated.");
-    } catch { showToast("Failed to update key access", "error"); }
+    saveKeyAccess.mutate();
   };
 
-  const handleSaveKeyRateLimitSettings = async (e) => {
+  const saveKeyRateLimit = useMutation({
+    mutationFn: () => apiPost("/admin/keys/rate-limit/update", {
+      key_id: Number(settingsKeyId),
+      requests_per_minute: Number(settingsKeyRpm),
+      burst: Number(settingsKeyBurst),
+    }),
+    onSuccess: () => { invalidate(); showToast("Key rate limit updated."); },
+    onError: () => showToast("Failed to update key rate limit", "error"),
+  });
+
+  const handleSaveKeyRateLimitSettings = (e) => {
     e.preventDefault();
     if (!settingsKeyId) return;
-    try {
-      await postForm("/admin/keys/rate-limit/update", {
-        key_id: Number(settingsKeyId),
-        requests_per_minute: Number(settingsKeyRpm),
-        burst: Number(settingsKeyBurst),
-      });
-      await fetchBootstrap();
-      showToast("Key rate limit updated.");
-    } catch { showToast("Failed to update key rate limit", "error"); }
+    saveKeyRateLimit.mutate();
   };
 
   const toggleSettingsDomainSelection = (domain) => {
@@ -63,76 +73,89 @@ export function useSettingsHandlers({
     setSettingsCustomDomain("");
   };
 
+  const toggleGlobalAccess = useMutation({
+    mutationFn: (checked) => apiPost("/admin/access", { global_access: checked ? "on" : null, new_domain: "" }),
+    onSuccess: (_, checked) => { invalidate(); showToast(`Global access ${checked ? "enabled" : "disabled"}`); },
+    onError: () => showToast("Failed to update access", "error"),
+  });
+
   const handleToggleGlobalAccess = async (checked) => {
-    try {
-      await postForm("/admin/access", { global_access: checked ? "on" : null, new_domain: "" });
-      await fetchBootstrap();
-      showToast(`Global access ${checked ? "enabled" : "disabled"}`);
-    } catch { showToast("Failed to update access", "error"); }
+    toggleGlobalAccess.mutate(checked);
   };
+
+  const addDomain = useMutation({
+    mutationFn: (domain) => apiPost("/admin/access", { global_access: access.global_access ? "on" : null, new_domain: domain }),
+    onSuccess: (_, domain) => { invalidate(); showToast(`Domain ${domain} added.`); },
+    onError: () => showToast("Failed to add domain", "error"),
+  });
 
   const handleAddDomain = async (e) => {
     e.preventDefault();
     const domain = new FormData(e.target).get("new_domain");
     if (!domain) return;
-    try {
-      await postForm("/admin/access", { global_access: access.global_access ? "on" : null, new_domain: domain });
-      await fetchBootstrap();
-      e.target.reset();
-      showToast(`Domain ${domain} added.`);
-    } catch { showToast("Failed to add domain", "error"); }
+    addDomain.mutate(domain, { onSuccess: () => e.target.reset() });
   };
+
+  const removeDomain = useMutation({
+    mutationFn: (domain) => apiPost("/admin/access/remove", { domain }),
+    onSuccess: (_, domain) => { invalidate(); showToast(`Domain ${domain} removed.`, "error"); },
+    onError: () => showToast("Failed to remove domain", "error"),
+  });
 
   const handleRemoveDomain = async (domain) => {
     if (!window.confirm(`Remove ${domain} from whitelist?`)) return;
-    try {
-      await postForm("/admin/access/remove", { domain });
-      await fetchBootstrap();
-      showToast(`Domain ${domain} removed.`, "error");
-    } catch { showToast("Failed to remove domain", "error"); }
+    removeDomain.mutate(domain);
   };
 
-  const handleCreateBackupNow = async () => {
-    try { await postForm("/admin/backups/create", {}); showToast("Backup created."); }
-    catch { showToast("Failed to create backup", "error"); }
-  };
+  const createBackup = useMutation({
+    mutationFn: () => apiPost("/admin/backups/create", {}),
+    onSuccess: () => showToast("Backup created."),
+    onError: () => showToast("Failed to create backup", "error"),
+  });
 
-  const handleCloudBackupPush = async () => {
-    try { await postForm("/admin/backups/cloud/push", {}); showToast("Cloud backup pushed."); }
-    catch { showToast("Cloud backup push failed", "error"); }
-  };
+  const handleCreateBackupNow = () => createBackup.mutate();
+
+  const cloudPush = useMutation({
+    mutationFn: () => apiPost("/admin/backups/cloud/push", {}),
+    onSuccess: () => showToast("Cloud backup pushed."),
+    onError: () => showToast("Cloud backup push failed", "error"),
+  });
+
+  const handleCloudBackupPush = () => cloudPush.mutate();
+
+  const cloudPull = useMutation({
+    mutationFn: () => apiPost("/admin/backups/cloud/pull", {}),
+    onSuccess: () => { invalidate(); showToast("Cloud backup restored."); },
+    onError: () => showToast("Cloud backup restore failed", "error"),
+  });
 
   const handleCloudBackupPull = async () => {
     if (!window.confirm("Restore from cloud backup now?")) return;
-    try {
-      await postForm("/admin/backups/cloud/pull", {});
-      await fetchBootstrap();
-      showToast("Cloud backup restored.");
-    } catch { showToast("Cloud backup restore failed", "error"); }
+    cloudPull.mutate();
   };
+
+  const restoreLatest = useMutation({
+    mutationFn: () => apiPost("/admin/backups/restore-latest", {}),
+    onSuccess: () => { invalidate(); showToast("Latest backup restored."); },
+    onError: () => showToast("Failed to restore backup", "error"),
+  });
 
   const handleRestoreLatestBackup = async () => {
     if (!window.confirm("Restore latest backup? This will overwrite current settings.")) return;
-    try {
-      await postForm("/admin/backups/restore-latest", {});
-      await fetchBootstrap();
-      showToast("Latest backup restored.");
-    } catch { showToast("Failed to restore backup", "error"); }
+    restoreLatest.mutate();
   };
 
   const handleExportMasterSetup = () => window.location.assign("/admin/export/master-setup.json");
 
   const handleImportMasterSetup = async (e) => {
     e.preventDefault();
-    const payload = new FormData();
-    payload.append("setup_file", new FormData(e.target).get("setup_file"));
+    const file = new FormData(e.target).get("setup_file");
+    if (!file) return;
     try {
-      const response = await fetch("/admin/import/master-setup", {
-        method: "POST", body: payload, credentials: "include"
-      });
-      const body = await response.json();
-      if (!response.ok || body.ok === false) throw new Error(body.message || "Import failed");
-      await fetchBootstrap();
+      const fd = new FormData();
+      fd.append("setup_file", file);
+      await apiPostForm("/admin/import/master-setup", fd);
+      invalidate();
       e.target.reset();
       showToast("Master setup imported.");
     } catch (error) { showToast(error.message || "Import failed", "error"); }
@@ -147,16 +170,9 @@ export function useSettingsHandlers({
       if (!file) return;
       const text = await file.text();
       const data = JSON.parse(text);
-      const resp = await fetch("/admin/api/autofill/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-        credentials: "include"
-      });
-      if (!resp.ok) throw new Error("Import failed");
-      const body = await resp.json();
+      const body = await apiPostJson("/admin/api/autofill/import", data);
       showToast(`Imported ${body.imported} autofill rules.`);
-      await fetchBootstrap();
+      invalidate();
       e.target.reset();
     } catch (err) { showToast(err.message, "error"); }
   };
@@ -170,15 +186,9 @@ export function useSettingsHandlers({
       if (!file) return;
       const text = await file.text();
       const data = JSON.parse(text);
-      const resp = await fetch("/admin/api/captcha/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-        credentials: "include"
-      });
-      if (!resp.ok) throw new Error("Import failed");
+      await apiPostJson("/admin/api/captcha/import", data);
       showToast("Captcha config imported.");
-      await fetchBootstrap();
+      invalidate();
       e.target.reset();
     } catch (err) { showToast(err.message, "error"); }
   };
@@ -192,15 +202,9 @@ export function useSettingsHandlers({
       if (!file) return;
       const fd = new FormData();
       fd.append("backup_file", file);
-      const resp = await fetch("/admin/import/master-backup.zip", {
-        method: "POST",
-        body: fd,
-        credentials: "include"
-      });
-      const body = await resp.json();
-      if (!resp.ok) throw new Error(body.detail || "Import failed");
+      await apiPostForm("/admin/import/master-backup.zip", fd);
       showToast("Master ZIP imported successfully.");
-      await fetchBootstrap();
+      invalidate();
       e.target.reset();
     } catch (err) { showToast(err.message, "error"); }
   };

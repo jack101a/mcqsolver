@@ -1,36 +1,43 @@
-import React, { useState, useEffect } from "react";
-import { Activity, BrainCircuit, Loader2, Save } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import PropTypes from "prop-types";
+import { BrainCircuit, Loader2, Save, GraduationCap, ToggleLeft, ToggleRight } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { apiGet, apiPostJson } from "../../api/client";
 
 export function ExamStatsPanel({
   examStats,
-  t_textHeading,
-  t_textMuted,
-  t_borderLight,
-  glassPanel,
-  glassInput,
-  solidButton,
-  isDark,
   showToast
 }) {
+  const { t_textHeading, t_textMuted, t_borderLight, glassPanel, glassInput, solidButton } = useThemeContext();
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [learningStats, setLearningStats] = useState(null);
+  const [togglingLearning, setTogglingLearning] = useState(false);
+  const initialSettings = useRef(null);
+
+  useEffect(() => {
+    const isDirty = initialSettings.current !== null && JSON.stringify(settings) !== JSON.stringify(initialSettings.current);
+    if (!isDirty) return;
+    const onBefore = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBefore);
+    return () => window.removeEventListener("beforeunload", onBefore);
+  }, [settings]);
 
   useEffect(() => {
     fetchSettings();
+    fetchLearningStats();
   }, []);
 
   const fetchSettings = async () => {
     try {
-      const resp = await fetch("/admin/api/settings", { credentials: "include" });
-      if (resp.ok) {
-        const data = await resp.json();
-        const settingsMap = {};
-        data.settings.forEach(s => {
-          settingsMap[s.key] = s.value;
-        });
-        setSettings(settingsMap);
-      }
+      const data = await apiGet("/admin/api/settings");
+      const settingsMap = {};
+      data.settings.forEach(s => {
+        settingsMap[s.key] = s.value;
+      });
+      setSettings(settingsMap);
+      initialSettings.current = JSON.parse(JSON.stringify(settingsMap));
     } catch (e) {
       console.error("Failed to fetch settings", e);
     } finally {
@@ -42,25 +49,8 @@ export function ExamStatsPanel({
     e.preventDefault();
     setSaving(true);
     try {
-      const examSettings = {};
-      Object.keys(settings).forEach(key => {
-        if (key.startsWith("exam.")) {
-          examSettings[key] = settings[key];
-        }
-      });
-
-      const resp = await fetch("/admin/api/settings/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: settings }),
-        credentials: "include"
-      });
-
-      if (resp.ok) {
-        showToast("Exam settings saved successfully");
-      } else {
-        showToast("Failed to save settings", "error");
-      }
+      await apiPostJson("/admin/api/settings/bulk", { settings });
+      showToast("Exam settings saved successfully");
     } catch (e) {
       showToast("Error saving settings", "error");
     } finally {
@@ -70,6 +60,29 @@ export function ExamStatsPanel({
 
   const updateSetting = (key, value) => {
     setSettings(prev => ({ ...prev, [key]: value }));
+  };
+
+  const fetchLearningStats = async () => {
+    try {
+      const data = await apiGet("/admin/api/exam/learning/stats");
+      setLearningStats(data);
+    } catch (e) {
+      console.error("Failed to fetch learning stats", e);
+    }
+  };
+
+  const toggleLearning = async () => {
+    setTogglingLearning(true);
+    try {
+      const newState = !learningStats?.learning_enabled;
+      await apiPostJson("/admin/api/exam/learning/toggle", { enabled: newState });
+      setLearningStats(prev => ({ ...prev, learning_enabled: newState }));
+      showToast(`Self-learning ${newState ? "enabled" : "disabled"}`);
+    } catch (e) {
+      showToast("Failed to toggle learning", "error");
+    } finally {
+      setTogglingLearning(false);
+    }
   };
 
   if (loading) {
@@ -197,6 +210,85 @@ export function ExamStatsPanel({
           </div>
         </div>
       </div>
+
+      {/* Self-Learning Section */}
+      <div className={`rounded-2xl p-6 ${glassPanel}`}>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className={`p-2 rounded-lg backdrop-blur-md ${learningStats?.learning_enabled ? 'bg-emerald-500/20 text-emerald-500' : 'bg-slate-500/20 text-slate-500'}`}>
+              <GraduationCap size={20}/>
+            </div>
+            <div>
+              <h3 className={`text-lg font-semibold ${t_textHeading}`}>Self-Learning System</h3>
+              <p className={`text-xs ${t_textMuted}`}>
+                Learns from correct answers on the actual exam — no LLM involved
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={toggleLearning}
+            disabled={togglingLearning}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+              learningStats?.learning_enabled
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30'
+                : 'bg-slate-500/20 text-slate-400 border border-slate-500/30 hover:bg-slate-500/30'
+            }`}
+          >
+            {togglingLearning ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : learningStats?.learning_enabled ? (
+              <ToggleRight size={18} />
+            ) : (
+              <ToggleLeft size={18} />
+            )}
+            {learningStats?.learning_enabled ? "Learning ON" : "Learning OFF"}
+          </button>
+        </div>
+
+        {learningStats && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className={`rounded-xl p-4 border ${t_borderLight} ${learningStats?.learning_enabled ? '' : 'opacity-50'}`}>
+              <p className={`text-xs ${t_textMuted}`}>Questions Learned</p>
+              <p className="text-2xl font-bold text-indigo-400">
+                {learningStats.learned?.total_learned || 0}
+              </p>
+            </div>
+            <div className={`rounded-xl p-4 border ${t_borderLight} ${learningStats?.learning_enabled ? '' : 'opacity-50'}`}>
+              <p className={`text-xs ${t_textMuted}`}>High Confidence</p>
+              <p className="text-2xl font-bold text-emerald-400">
+                {learningStats.learned?.high_confidence || 0}
+              </p>
+            </div>
+            <div className={`rounded-xl p-4 border ${t_borderLight} ${learningStats?.learning_enabled ? '' : 'opacity-50'}`}>
+              <p className={`text-xs ${t_textMuted}`}>Total Confirmations</p>
+              <p className="text-2xl font-bold text-amber-400">
+                {learningStats.learned?.total_confirmations || 0}
+              </p>
+            </div>
+            <div className={`rounded-xl p-4 border ${t_borderLight} ${learningStats?.learning_enabled ? '' : 'opacity-50'}`}>
+              <p className={`text-xs ${t_textMuted}`}>Attempt Accuracy</p>
+              <p className="text-2xl font-bold text-cyan-400">
+                {((learningStats.attempts?.accuracy || 0) * 100).toFixed(1)}%
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className={`mt-4 p-4 rounded-xl border ${t_borderLight} text-xs ${t_textMuted}`}>
+          <p className="font-medium mb-1">How it works:</p>
+          <ol className="list-decimal list-inside space-y-0.5 opacity-80">
+            <li>Extension solves question on real exam</li>
+            <li>Score counter confirms answer was correct</li>
+            <li>Question image + options + answer saved to learning DB</li>
+            <li>Next time same question appears → instant answer (no LLM)</li>
+          </ol>
+        </div>
+      </div>
     </div>
   );
 }
+
+ExamStatsPanel.propTypes = {
+  examStats: PropTypes.object.isRequired,
+  showToast: PropTypes.func.isRequired,
+};
