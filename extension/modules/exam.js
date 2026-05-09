@@ -91,11 +91,9 @@
             const alt = document.querySelector('h3.text-success');
             return alt ? alt.innerText.trim() : '—';
         };
-        const getQImage  = () => document.querySelector('img[name="qframe"]')?.src       || null;
-        const getOptImgs = () => [1,2,3,4].map(i => {
-            const el = document.getElementById('choice' + i);
-            return el ? (el.src || null) : null;
-        }).filter(Boolean);
+        const getQImageEl = () => document.querySelector('img[name="qframe"]') || null;
+        const getQImage  = () => getQImageEl()?.src || null;
+        const getOptImgEls = () => [1,2,3,4].map(i => document.getElementById('choice' + i)).filter(Boolean);
         const parseScore = () => {
             const txt = getScore();
             const m = txt.match(/\d+/);
@@ -148,6 +146,16 @@
             await window.up_humanMouse(radio);
             radio.click();
             return true;
+        }
+
+        function imageToPayload(imgEl) {
+            if (!imgEl) return null;
+            if (typeof window.up_imgToB64 === 'function') {
+                const dataUrl = window.up_imgToB64(imgEl);
+                if (dataUrl) return dataUrl;
+            }
+            const src = imgEl.src || '';
+            return src.startsWith('data:image/') ? src : null;
         }
 
         function waitAndSubmit(deadline, isLast) {
@@ -262,11 +270,17 @@
             setStatus('Solving…', 'work');
 
             try {
-                const optImgs = getOptImgs();
+                const questionPayload = imageToPayload(getQImageEl());
+                const optImgs = getOptImgEls().map(imageToPayload).filter(Boolean);
+                if (!questionPayload || optImgs.length < 2) {
+                    setStatus('Waiting for images...', 'work');
+                    state.processing = false;
+                    return;
+                }
                 
                 // Solve with a 20-second timeout. If it takes longer, we'll click randomly.
                 const solvePromise = window.up_sendMsg('SOLVE_EXAM', {
-                    questionB64: qSrc,
+                    questionB64: questionPayload,
                     optionB64s:  optImgs,
                     domain:      window.location.hostname,
                 });
@@ -281,7 +295,7 @@
 
                     // Store for feedback when score is checked next cycle
                     state.lastSolve = {
-                        questionB64: qSrc,
+                        questionB64: questionPayload,
                         optionB64s:  optImgs,
                         selectedOption: optNum,
                         method:      resp.data.method,
@@ -312,7 +326,7 @@
                         }
                     }
 
-                    const optCount = getOptImgs().length || 3;
+                    const optCount = optImgs.length || 3;
                     const randomOpt = window.up_rndInt(1, optCount);
                     
                     setStatus(isTimeout ? '⏰ Time Limit!' : '✗ Random Fallback', 'fail');
@@ -320,7 +334,7 @@
                     
                     // Store for feedback (random fallback — likely wrong, but track anyway)
                     state.lastSolve = {
-                        questionB64: qSrc,
+                        questionB64: questionPayload,
                         optionB64s:  optImgs,
                         selectedOption: randomOpt,
                         method:      isTimeout ? 'timeout' : 'random_fallback',

@@ -103,10 +103,22 @@ async def sync_userscripts(request: Request) -> dict:
     """
     Sync backend-managed userscripts to the extension.
     Source of truth:
-    - Optional index file: datasets/userscripts/index.json
-    - Fallback: all *.user.js files in datasets/userscripts
+    - Optional index file in data/userscripts or data/mappings
+    - Fallback: all *.user.js files in the first populated source directory
     """
-    scripts_dir = (get_project_root() / "data" / "mappings").resolve()
+    root = get_project_root()
+    candidate_dirs = [
+        (root / "data" / "userscripts").resolve(),
+        (root / "data" / "mappings").resolve(),
+        (root / "backend" / "datasets" / "userscripts").resolve(),
+    ]
+    scripts_dir = next(
+        (
+            item for item in candidate_dirs
+            if (item / "index.json").is_file() or any(item.glob("*.user.js"))
+        ),
+        candidate_dirs[0],
+    )
 
     scripts_data: list[dict] = []
     index_path = scripts_dir / "index.json"
@@ -139,6 +151,11 @@ async def sync_userscripts(request: Request) -> dict:
                         "exclude": entry.get("exclude") if isinstance(entry.get("exclude"), list) else parsed["exclude"],
                         "runAt": str(entry.get("runAt") or parsed["runAt"]),
                         "requires": entry.get("requires") if isinstance(entry.get("requires"), list) else parsed["requires"],
+                        "resources": entry.get("resources") if isinstance(entry.get("resources"), list) else parsed["resources"],
+                        "grants": entry.get("grants") if isinstance(entry.get("grants"), list) else parsed["grants"],
+                        "connects": entry.get("connects") if isinstance(entry.get("connects"), list) else parsed["connects"],
+                        "noframes": bool(entry.get("noframes", parsed["noframes"])),
+                        "updatedAt": int(path.stat().st_mtime),
                         "code": code,
                     })
                 except Exception as e:
@@ -163,6 +180,11 @@ async def sync_userscripts(request: Request) -> dict:
                     "exclude": parsed["exclude"],
                     "runAt": parsed["runAt"],
                     "requires": parsed["requires"],
+                    "resources": parsed["resources"],
+                    "grants": parsed["grants"],
+                    "connects": parsed["connects"],
+                    "noframes": parsed["noframes"],
+                    "updatedAt": int(filepath.stat().st_mtime),
                     "code": code,
                 })
             except Exception as e:

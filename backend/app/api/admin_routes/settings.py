@@ -73,7 +73,13 @@ def _update_index():
             "version": meta["version"],
             "enabled": enabled,
             "matches": meta["matches"],
+            "exclude": meta["exclude"],
             "runAt": meta["runAt"],
+            "requires": meta["requires"],
+            "resources": meta["resources"],
+            "grants": meta["grants"],
+            "connects": meta["connects"],
+            "noframes": meta["noframes"],
         })
     index_path.write_text(json.dumps(new_index, indent=2), encoding="utf-8")
 
@@ -295,6 +301,8 @@ async def list_userscripts(request: Request):
                         "version": str(entry.get("version") or parsed["version"]),
                         "enabled": bool(entry.get("enabled", True)),
                         "matches_count": len(entry.get("matches") if isinstance(entry.get("matches"), list) else parsed["matches"]),
+                        "requires_count": len(entry.get("requires") if isinstance(entry.get("requires"), list) else parsed["requires"]),
+                        "grants": entry.get("grants") if isinstance(entry.get("grants"), list) else parsed["grants"],
                         "runAt": str(entry.get("runAt") or parsed["runAt"]),
                         "updated_at": file_path.stat().st_mtime,
                         "code": code,
@@ -314,6 +322,8 @@ async def list_userscripts(request: Request):
                 "version": parsed["version"],
                 "enabled": True,
                 "matches_count": len(parsed["matches"]),
+                "requires_count": len(parsed["requires"]),
+                "grants": parsed["grants"],
                 "runAt": parsed["runAt"],
                 "updated_at": file_path.stat().st_mtime,
                 "code": code,
@@ -346,6 +356,8 @@ async def create_userscript(request: Request):
     uid = re.sub(r"\W+", "_", name.lower())
     version = (body.get("version") or meta["version"] or "0.0.0").strip()
     matches = body.get("matches") if body.get("matches") is not None else meta["matches"]
+    if not isinstance(matches, list) or not matches:
+        matches = ["<all_urls>"]
     runAt = (body.get("runAt") or meta["runAt"] or "document-idle").strip()
     
     final_code = _ensure_headers(name, version, matches, runAt, code_body)
@@ -381,6 +393,8 @@ async def update_userscript(request: Request, uid: str):
     
     version = (body.get("version") or meta["version"] or "0.0.0").strip()
     matches = body.get("matches") if body.get("matches") is not None else meta["matches"]
+    if not isinstance(matches, list) or not matches:
+        matches = ["<all_urls>"]
     runAt = (body.get("runAt") or meta["runAt"] or "document-idle").strip()
     
     final_code = _ensure_headers(name, version, matches, runAt, code_body)

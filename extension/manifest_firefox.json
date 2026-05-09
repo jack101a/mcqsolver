@@ -12,6 +12,8 @@
     "unlimitedStorage",
     "tabs",
     "downloads",
+    "notifications",
+    "clipboardWrite",
     "scripting",
     "alarms",
     "browsingData",

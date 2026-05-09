@@ -141,6 +141,49 @@ async def admin_dashboard(request: Request):
     return HTMLResponse(content="<h1>Admin UI not built</h1>", status_code=404)
 
 
+@router.get("/api/exam/stats")
+async def get_exam_stats_api(request: Request) -> Any:
+    """Get high-level MCQ/exam statistics before the SPA catch-all."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    stats = container.db.get_exam_stats()
+    return JSONResponse(stats)
+
+
+@router.get("/api/exam/learning/stats")
+async def get_exam_learning_stats_api(request: Request) -> Any:
+    """Get self-learning statistics before the SPA catch-all."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    db = container.db
+    learned_stats = db.get_exam_learned_stats()
+    attempt_stats = db.get_exam_attempts_stats()
+    learning_enabled = db.get_setting("exam.learning_enabled", "true").lower() in ("true", "1", "yes", "on")
+    return JSONResponse({
+        "learning_enabled": learning_enabled,
+        "learned": learned_stats,
+        "attempts": attempt_stats,
+    })
+
+
+@router.post("/api/exam/learning/toggle")
+async def toggle_exam_learning_api(request: Request) -> Any:
+    """Enable or disable self-learning before the SPA catch-all."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    db = container.db
+    body = await request.json()
+    enabled = str(body.get("enabled", True)).lower() in ("true", "1", "yes", "on")
+    db.set_setting("exam.learning_enabled", "true" if enabled else "false")
+    return JSONResponse({"learning_enabled": enabled, "message": f"Learning {'enabled' if enabled else 'disabled'}"})
+
+
 @router.get("/{full_path:path}", response_class=HTMLResponse)
 async def admin_spa_fallback(request: Request, full_path: str):
     """Catch-all for SPA client-side routes — serve index.html."""
@@ -152,7 +195,7 @@ async def admin_spa_fallback(request: Request, full_path: str):
     return HTMLResponse(content="<h1>Admin UI not built</h1>", status_code=404)
 
 
-@router.get("/api/exam/stats")
+@router.get("/_legacy/api/exam/stats")
 async def get_exam_stats(request: Request) -> Any:
     """Get high-level MCQ/exam statistics."""
     denied = _admin_guard(request)
@@ -163,7 +206,7 @@ async def get_exam_stats(request: Request) -> Any:
     return JSONResponse(stats)
 
 
-@router.get("/api/exam/learning/stats")
+@router.get("/_legacy/api/exam/learning/stats")
 async def get_exam_learning_stats(request: Request) -> Any:
     """Get self-learning statistics — learned questions, attempts, accuracy."""
     denied = _admin_guard(request)
@@ -183,7 +226,7 @@ async def get_exam_learning_stats(request: Request) -> Any:
     })
 
 
-@router.post("/api/exam/learning/toggle")
+@router.post("/_legacy/api/exam/learning/toggle")
 async def toggle_exam_learning(request: Request) -> Any:
     """Enable or disable self-learning for exam."""
     denied = _admin_guard(request)

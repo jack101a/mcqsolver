@@ -1,48 +1,30 @@
-# TASK.md — Direct UPI Payment System Implementation
+# TASK.md - Diagnose STALL Solver CR/Solver Path
 
-## Status: COMPLETE
+## Status: IN PROGRESS
 
-All 15 tasks across 6 phases are complete.
+Goal: Find why STALL solver is not working in the captcha/CR-related solver path, not Step 3/4 payload loading.
 
-## Summary
+Scope included:
+- Inspect extension captcha solver flow used on STALL/Sarathi pages.
+- Inspect CR/captcha route sync and selector mapping data.
+- Inspect backend `/v1/solve`, `/v1/field-mappings/routes`, `/v1/locators`, and recent backend logs.
+- Identify whether the issue is route/selector mismatch, API key/domain access, backend model failure, or extension message wiring.
+- Apply minimal fix if exact cause is found.
+- Update `STATE.md`.
 
-### Codebase Analysis
-The project is a unified platform (FastAPI backend + React frontend + Telegram bot) with:
-- SQLAlchemy ORM models for users, subscriptions, payments, API keys
-- Telegram bot for registration and payment flow
-- Admin dashboard for managing users, payments, keys, settings
+Scope excluded:
+- Step 3/4 automation payload debugging.
+- Broad STALL automation refactor.
 
-### What Was Implemented
+Plan:
+- [x] Read `AGENTS.md`, `STATE.md`, and current `TASK.md`.
+- [ ] Inspect captcha/CR extension modules and route sync.
+- [ ] Inspect backend DB data for Sarathi routes/locators/access.
+- [ ] Check recent `/v1/solve` and sync logs.
+- [ ] Patch minimal mismatch if found.
+- [ ] Verify.
+- [ ] Update `STATE.md`.
 
-**Bug Fixes (2):**
-1. `cycle.requests_used` → `cycle.used_count` in admin users API
-2. PaymentRecord model fields and to_dict updates
-
-**Model Enhancements:**
-- PaymentRecord: 8 new fields (plan_id, telegram_user_id, payment_ref, upi_id_used, payee_name_used, ocr_extracted_amount, ocr_extracted_date, ocr_extracted_payer, expires_at)
-- UserApiKey: 2 new tracking fields (last_used_at, usage_count)
-- Payment statuses: proper flow from pending_payment → screenshot_submitted → ready_for_admin_approval → approved/rejected/expired
-
-**Telegram Bot Fixes (6):**
-1. "Tap to Pay" as clickable inline keyboard button
-2. Fallback copyable UPI ID and payment note below button
-3. Dynamic UPI link from admin payment settings
-4. /my_status: shows plan, expiry, usage, API key status, latest payment
-5. /regenerate_key: already working correctly (verified)
-6. Telegram notification on admin approval/rejection
-
-**Admin Panel Enhancements:**
-- PaymentsPanel: TG ID, Ref, UPI ID columns, enhanced OCR details
-- KeysPanel: Last Used, Usage columns
-- SettingsPanel: Payment Note Prefix, Currency fields
-
-**Backend API Enhancements:**
-- Approve: uses plan.duration_days, deactivates old subscriptions, creates API key, notifies user
-- Reject: notifies user
-- OCR: extracts amount, date, payer info
-
-### Verification
-- Backend syntax: all files OK
-- Tests: 10/10 pass
-- Imports: all verified
-- Frontend: brace-balanced
+Verification:
+- [ ] Backend health and relevant sync endpoints are OK.
+- [ ] JS/Python syntax checks pass for touched files.

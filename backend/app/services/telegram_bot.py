@@ -977,6 +977,7 @@ def start_bot(settings=None, session_factory=None) -> TelegramBotService | None:
     Reads token from env var first, then config, then DB platform setting.
     """
     import os, threading
+    from sqlalchemy import text
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     if not token and settings:
         token = settings.telegram.bot_token
@@ -984,7 +985,8 @@ def start_bot(settings=None, session_factory=None) -> TelegramBotService | None:
         try:
             session = session_factory()
             row = session.execute(
-                "SELECT value FROM platform_settings WHERE key = 'telegram.bot_token'"
+                text("SELECT value FROM platform_settings WHERE key = :key"),
+                {"key": "telegram.bot_token"},
             ).fetchone()
             session.close()
             if row and row[0]:
@@ -1005,13 +1007,25 @@ def start_bot(settings=None, session_factory=None) -> TelegramBotService | None:
     if session_factory:
         try:
             session = session_factory()
-            row_upi = session.execute("SELECT value FROM platform_settings WHERE key = 'payment.upi_id'").fetchone()
+            row_upi = session.execute(
+                text("SELECT value FROM platform_settings WHERE key = :key"),
+                {"key": "payment.upi_id"},
+            ).fetchone()
             if row_upi and row_upi[0]: upi_id = row_upi[0]
-            row_qr = session.execute("SELECT value FROM platform_settings WHERE key = 'payment.qr_image_url'").fetchone()
+            row_qr = session.execute(
+                text("SELECT value FROM platform_settings WHERE key = :key"),
+                {"key": "payment.qr_image_url"},
+            ).fetchone()
             if row_qr and row_qr[0]: qr_image_url = row_qr[0]
-            row_payee = session.execute("SELECT value FROM platform_settings WHERE key = 'payment.payee_name'").fetchone()
+            row_payee = session.execute(
+                text("SELECT value FROM platform_settings WHERE key = :key"),
+                {"key": "payment.payee_name"},
+            ).fetchone()
             if row_payee and row_payee[0]: payee_name = row_payee[0]
-            row_note = session.execute("SELECT value FROM platform_settings WHERE key = 'payment.note_prefix'").fetchone()
+            row_note = session.execute(
+                text("SELECT value FROM platform_settings WHERE key = :key"),
+                {"key": "payment.note_prefix"},
+            ).fetchone()
             if row_note and row_note[0]: note_prefix = row_note[0]
             session.close()
         except Exception:

@@ -4,45 +4,101 @@
 
 
 async function handleGMCall(msg) {
-    const { action, key, value, defaultValue, details, requestId } = msg;
+    const { action, key, value, defaultValue, details, requestId, scriptId } = msg;
+    const ns = String(scriptId || 'global');
+    const storageKey = `userscript_storage:${ns}`;
     
     if (action === 'getValue') {
-        const data = await storageGet(['userscript_storage']);
-        const store = data.userscript_storage || {};
+        const data = await storageGet([storageKey]);
+        const store = data[storageKey] || {};
         return { requestId, value: store[key] !== undefined ? store[key] : defaultValue };
     }
     
     if (action === 'setValue') {
-        const data = await storageGet(['userscript_storage']);
-        const store = data.userscript_storage || {};
+        const data = await storageGet([storageKey]);
+        const store = data[storageKey] || {};
         store[key] = value;
-        await storageSet({ userscript_storage: store });
+        await storageSet({ [storageKey]: store });
         return { requestId, ok: true };
+    }
+
+    if (action === 'deleteValue') {
+        const data = await storageGet([storageKey]);
+        const store = data[storageKey] || {};
+        delete store[key];
+        await storageSet({ [storageKey]: store });
+        return { requestId, ok: true };
+    }
+
+    if (action === 'listValues') {
+        const data = await storageGet([storageKey]);
+        return { requestId, values: Object.keys(data[storageKey] || {}) };
     }
     
     if (action === 'xmlhttpRequest') {
         try {
-            const response = await fetch(details.url, {
-                method: details.method || 'GET',
-                headers: details.headers || {},
-                body: details.data || null
+            const cleanDetails = details || {};
+            const allowed = await isUserscriptConnectAllowed(ns, cleanDetails.url);
+            if (!allowed) return { requestId, error: `@connect blocked: ${cleanDetails.url}` };
+            const response = await fetch(cleanDetails.url, {
+                method: cleanDetails.method || 'GET',
+                headers: cleanDetails.headers || {},
+                body: cleanDetails.data || null,
+                credentials: cleanDetails.anonymous ? 'omit' : 'include',
             });
-            const text = await response.text();
+            const responseText = await response.text();
             return { 
                 requestId, 
                 response: {
                     status: response.status,
                     statusText: response.statusText,
-                    responseText: text,
-                    responseHeaders: response.headers.toString()
+                    finalUrl: response.url,
+                    responseText,
+                    response: responseText,
+                    responseHeaders: Array.from(response.headers.entries()).map(([k, v]) => `${k}: ${v}`).join('\r\n')
                 } 
             };
         } catch (e) {
             return { requestId, error: e.message };
         }
     }
+
+    if (action === 'notification') {
+        const text = typeof details === 'string' ? details : (details?.text || details?.message || '');
+        const title = typeof details === 'object' ? (details.title || 'Userscript') : 'Userscript';
+        if (chrome.notifications?.create) {
+            chrome.notifications.create({
+                type: 'basic',
+                iconUrl: 'icons/icon48.png',
+                title,
+                message: text || title,
+            });
+            return { requestId, ok: true };
+        }
+        return { requestId, ok: false, error: 'notifications API unavailable' };
+    }
     
     return { requestId, error: 'Unknown GM action' };
+}
+
+async function isUserscriptConnectAllowed(scriptId, targetUrl) {
+    try {
+        const url = new URL(String(targetUrl || ''));
+        const data = await storageGet(['normalized_userscripts']);
+        const scripts = Array.isArray(data.normalized_userscripts) ? data.normalized_userscripts : [];
+        const script = scripts.find(item => String(item.id) === String(scriptId));
+        const connects = script?.parsedMeta?.connects || [];
+        if (!connects.length) return true;
+        return connects.some(pattern => {
+            const clean = String(pattern || '').trim().toLowerCase();
+            if (!clean) return false;
+            if (clean === '*' || clean === '<all_urls>') return true;
+            if (clean.startsWith('*.')) return url.hostname.toLowerCase().endsWith(clean.slice(1));
+            return url.hostname.toLowerCase() === clean.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+        });
+    } catch (_) {
+        return false;
+    }
 }
 
 function parseUserscript(code) {
@@ -50,6 +106,10 @@ function parseUserscript(code) {
         matches: [],
         exclude: [],
         requires: [],
+        resources: [],
+        grants: [],
+        connects: [],
+        noframes: false,
         runAt: 'document-idle',
         name: 'Unnamed',
         version: '0.0',
@@ -59,13 +119,20 @@ function parseUserscript(code) {
     if (match) {
         const lines = match[1].split('\n');
         for (const line of lines) {
-            const m = line.match(/\/\/\s*@([\w-]+)\s+(.*)/);
+            const m = line.match(/\/\/\s*@([\w-]+)\s*(.*)/);
             if (m) {
                 const key = m[1].trim().toLowerCase();
                 const val = m[2].trim();
                 if (key === 'match' || key === 'include') meta.matches.push(val);
                 else if (key === 'exclude') meta.exclude.push(val);
                 else if (key === 'require') meta.requires.push(val);
+                else if (key === 'resource') {
+                    const parts = val.split(/\s+/, 2);
+                    if (parts.length === 2) meta.resources.push({ name: parts[0], url: parts[1] });
+                }
+                else if (key === 'grant') meta.grants.push(val);
+                else if (key === 'connect') meta.connects.push(val);
+                else if (key === 'noframes') meta.noframes = true;
                 else if (key === 'run-at') meta.runAt = val;
                 else if (key === 'name') meta.name = val;
                 else if (key === 'version') meta.version = val;
@@ -106,6 +173,7 @@ async function migrateUserscripts() {
 
 const API_BASE = 'http://localhost:8780'; // Default API endpoint
 const SYNC_ALARM = 'auto_sync';
+const STALL_KEEPALIVE_ALARM = 'stall_keepalive';
 const SYNC_PERIOD_MIN = 5;
 let cachedDeviceId = '';
 let pendingDeviceIdPromise = null;
@@ -118,6 +186,63 @@ let automationState = {
 
 function _persistAutomationState() {
     chrome.storage.local.set({ _automationState: automationState });
+}
+
+function _setStallKeepAlive(active) {
+    if (active) {
+        chrome.alarms.create(STALL_KEEPALIVE_ALARM, { periodInMinutes: 1 });
+    } else {
+        chrome.alarms.clear(STALL_KEEPALIVE_ALARM);
+    }
+}
+
+function _injectStallKeepAlive(tabId) {
+    if (!tabId) return;
+    chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        world: 'MAIN',
+        func: () => {
+            if (window.__STALL_KEEPALIVE_INSTALLED__) return;
+            window.__STALL_KEEPALIVE_INSTALLED__ = true;
+            try {
+                Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+                Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+                Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
+                Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+            } catch (_) {}
+            const stop = (event) => event.stopImmediatePropagation();
+            document.addEventListener('visibilitychange', stop, true);
+            window.addEventListener('blur', stop, true);
+            window.addEventListener('pagehide', stop, true);
+            window.addEventListener('freeze', stop, true);
+            window.addEventListener('resume', stop, true);
+            window.__stall_keepalive_tick = window.__stall_keepalive_tick || setInterval(() => {
+                try {
+                    window.dispatchEvent(new Event('focus'));
+                    document.dispatchEvent(new Event('visibilitychange'));
+                    document.body?.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 1, clientY: 1 }));
+                } catch (_) {}
+            }, 15000);
+            try {
+                navigator.wakeLock?.request?.('screen').then(lock => {
+                    window.__stall_wake_lock = lock;
+                }).catch(() => {});
+            } catch (_) {}
+        }
+    }, () => {
+        void chrome.runtime.lastError;
+    });
+}
+
+function _stallKeepAliveTick() {
+    if (!automationState.active || !automationState.tabId) return;
+    chrome.tabs.get(automationState.tabId, tab => {
+        if (chrome.runtime.lastError || !tab) return;
+        _injectStallKeepAlive(automationState.tabId);
+        chrome.tabs.sendMessage(automationState.tabId, { type: 'STALL_KEEPALIVE_TICK' }, () => {
+            void chrome.runtime.lastError;
+        });
+    });
 }
 
 // Throttle to avoid redirect loops (per tab)
@@ -154,6 +279,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
   const url = tab.url;
   if (isErrorLikeUrl(url)) return;
+  if (automationState.active && automationState.tabId === tabId) {
+    _injectStallKeepAlive(tabId);
+  }
   if (!url.includes('sarathi.parivahan.gov.in/sarathiservice')) return;
 
   // If /403.jsp somehow loads, immediately jump to stable URL (extra safety beyond DNR)
@@ -365,6 +493,97 @@ async function incrementStat(key) {
     await storageSet({ [key]: val });
 }
 
+async function appendUserscriptLog(entry) {
+    const data = await storageGet(['userscript_logs']);
+    const logs = Array.isArray(data.userscript_logs) ? data.userscript_logs : [];
+    logs.unshift({ ts: Date.now(), ...entry });
+    await storageSet({ userscript_logs: logs.slice(0, 200) });
+}
+
+async function fetchUserscriptDependency(url) {
+    const cleanUrl = String(url || '').trim();
+    if (!/^https?:\/\//i.test(cleanUrl)) return { url: cleanUrl, ok: false, code: '', error: 'Only http(s) @require URLs are supported' };
+    try {
+        const resp = await fetch(cleanUrl, { credentials: 'omit' });
+        if (!resp.ok) return { url: cleanUrl, ok: false, code: '', error: `HTTP ${resp.status}` };
+        const code = await resp.text();
+        return { url: cleanUrl, ok: true, code, error: '' };
+    } catch (e) {
+        return { url: cleanUrl, ok: false, code: '', error: e.message };
+    }
+}
+
+async function fetchUserscriptResource(resource) {
+    const url = String(resource?.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) return { ...resource, ok: false, text: '', dataUrl: '', error: 'Only http(s) @resource URLs are supported' };
+    try {
+        const resp = await fetch(url, { credentials: 'omit' });
+        if (!resp.ok) return { ...resource, ok: false, text: '', dataUrl: '', error: `HTTP ${resp.status}` };
+        const contentType = resp.headers.get('content-type') || 'application/octet-stream';
+        const buffer = await resp.arrayBuffer();
+        const bytes = Array.from(new Uint8Array(buffer));
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const text = new TextDecoder().decode(new Uint8Array(buffer));
+        const dataUrl = `data:${contentType};base64,${btoa(binary)}`;
+        return { ...resource, ok: true, text, dataUrl, error: '' };
+    } catch (e) {
+        return { ...resource, ok: false, text: '', dataUrl: '', error: e.message };
+    }
+}
+
+async function bundleUserscript(script) {
+    const parsedMeta = parseUserscript(script.code || '');
+    const requires = Array.isArray(script.requires) && script.requires.length ? script.requires : parsedMeta.requires;
+    const bundledRequires = [];
+    const bundledResources = [];
+    const requireErrors = [];
+    for (const url of requires || []) {
+        const dep = await fetchUserscriptDependency(url);
+        if (dep.ok) bundledRequires.push({ url: dep.url, code: dep.code });
+        else requireErrors.push({ url: dep.url, error: dep.error });
+    }
+    const resources = Array.isArray(script.resources) ? script.resources : parsedMeta.resources;
+    for (const resource of resources || []) {
+        const fetched = await fetchUserscriptResource(resource);
+        if (fetched.ok) bundledResources.push({
+            name: fetched.name,
+            url: fetched.url,
+            text: fetched.text,
+            dataUrl: fetched.dataUrl
+        });
+        else requireErrors.push({ url: fetched.url, error: fetched.error });
+    }
+    const runAt = script.runAt || parsedMeta.runAt || 'document-idle';
+    const matches = Array.isArray(script.matches) && script.matches.length ? script.matches : parsedMeta.matches;
+    return {
+        id: script.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `script_${Date.now()}`),
+        name: script.name || parsedMeta.name || 'Unnamed',
+        version: script.version || parsedMeta.version || '0.0.0',
+        enabled: script.enabled !== false,
+        source: 'backend',
+        rawCode: script.code || '',
+        bundledRequireCode: bundledRequires.map(item => `\n/* @require ${item.url} */\n${item.code}`).join('\n'),
+        bundledResources,
+        requireErrors,
+        parsedMeta: {
+            ...parsedMeta,
+            matches: matches.length ? matches : ['<all_urls>'],
+            exclude: Array.isArray(script.exclude) ? script.exclude : parsedMeta.exclude,
+            runAt,
+            requires,
+            resources,
+            grants: Array.isArray(script.grants) ? script.grants : parsedMeta.grants,
+            connects: Array.isArray(script.connects) ? script.connects : parsedMeta.connects,
+            noframes: !!script.noframes || !!parsedMeta.noframes,
+            description: script.description || parsedMeta.description || ''
+        },
+        installedAt: Date.now(),
+        updatedAt: script.updatedAt ? Number(script.updatedAt) * 1000 : Date.now(),
+        lastError: requireErrors.length ? requireErrors.map(item => `${item.url}: ${item.error}`).join('; ') : null
+    };
+}
+
 async function startLocate(targetField) {
     let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (!tab || !tab.url || !/^https?:/i.test(tab.url)) {
@@ -529,28 +748,19 @@ async function syncAll(source) {
     try {
         const data = await apiGet('/v1/userscripts/sync').catch(() => null);
         if (data && data.scripts) {
-            const normalized = data.scripts.map(script => {
-                const parsedMeta = parseUserscript(script.code || '');
-                const runAt = script.runAt || parsedMeta.runAt || 'document-idle';
-                return {
-                    id: script.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `script_${Date.now()}`),
-                    name: script.name || parsedMeta.name || 'Unnamed',
-                    version: script.version || parsedMeta.version || '0.0.0',
-                    enabled: script.enabled !== false,
-                    source: 'backend',
-                    rawCode: script.code || '',
-                    parsedMeta: {
-                        ...parsedMeta,
-                        matches: Array.isArray(script.matches) && script.matches.length ? script.matches : parsedMeta.matches,
-                        exclude: Array.isArray(script.exclude) ? script.exclude : parsedMeta.exclude,
-                        runAt: runAt,
-                        description: script.description || parsedMeta.description || ''
-                    },
-                    installedAt: Date.now(),
-                    updatedAt: Date.now(),
-                    lastError: null
-                };
-            });
+            const normalized = [];
+            for (const script of data.scripts) {
+                const bundled = await bundleUserscript(script);
+                normalized.push(bundled);
+                if (bundled.requireErrors.length) {
+                    await appendUserscriptLog({
+                        level: 'warn',
+                        scriptId: bundled.id,
+                        scriptName: bundled.name,
+                        message: `@require failed: ${bundled.lastError}`
+                    });
+                }
+            }
             const existing = await storageGet(['userscriptsEnabled']);
             await chrome.storage.local.set({
                 normalized_userscripts: normalized,
@@ -584,6 +794,8 @@ chrome.alarms.onAlarm.addListener(alarm => {
                 lastVerify: Date.now()
             });
         }).catch(() => {});
+    } else if (alarm.name === STALL_KEEPALIVE_ALARM) {
+        _stallKeepAliveTick();
     }
 });
 
@@ -607,7 +819,19 @@ syncAll('wake');
 chrome.storage.local.get(['_automationState'], (stored) => {
     if (stored._automationState?.active) {
         automationState = stored._automationState;
+        _setStallKeepAlive(true);
+        _stallKeepAliveTick();
         console.log('[STALL] Restored automation state from storage, step:', automationState.step);
+    }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (automationState.active && automationState.tabId === tabId) {
+        automationState.active = false;
+        automationState.tabId = null;
+        _persistAutomationState();
+        _setStallKeepAlive(false);
+        console.log('[STALL] User closed the STALL tab; session stopped.');
     }
 });
 
@@ -637,6 +861,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'GM_API_CALL') {
         handleGMCall(msg).then(sendResponse);
+        return true;
+    }
+
+    if (msg.type === 'USERSCRIPT_LOG') {
+        appendUserscriptLog({
+            level: msg.level || 'info',
+            scriptId: msg.scriptId || '',
+            scriptName: msg.scriptName || '',
+            message: msg.message || ''
+        }).then(() => sendResponse({ ok: true }));
         return true;
     }
 
@@ -954,6 +1188,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 if (newWin && newWin.tabs && newWin.tabs[0]) {
                     automationState.tabId = newWin.tabs[0].id;
                     _persistAutomationState();
+                    _setStallKeepAlive(true);
+                    _injectStallKeepAlive(automationState.tabId);
                     sendResponse({ ok: true });
                 } else {
                     sendResponse({ ok: false, error: 'Failed to start window' });
@@ -1027,6 +1263,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'FINISH_STALL_AUTOMATION') {
         automationState.active = false;
         _persistAutomationState();
+        _setStallKeepAlive(false);
         chrome.storage.local.remove(['stallStepScripts']);
         console.log('[Automation] STALL session complete. MCQ Solver taking over.');
         sendResponse({ ok: true });
