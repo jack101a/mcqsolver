@@ -3,8 +3,9 @@ import os
 import json
 import re
 from pathlib import Path
-from fastapi import APIRouter, Request, Form, HTTPException
+from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File
 from fastapi.responses import RedirectResponse, FileResponse
+from pydantic import BaseModel
 from app.core.userscript_utils import parse_userscript_meta
 from app.core.paths import get_project_root
 from .utils import _admin_guard, _write_auto_backup
@@ -121,17 +122,43 @@ async def get_settings(request: Request):
         masked.append(row)
     return {"settings": masked}
 
-@router.post("/api/settings")
-async def save_setting(
-    request: Request,
-    key: str = Form(...),
-    value: str = Form(...),
-):
-    """Save a single platform setting to the DB."""
+@router.get("/api/settings/{key:path}")
+async def get_setting(request: Request, key: str):
+    """Return a single platform setting by key."""
     denied = _admin_guard(request)
     if denied:
         return denied
     container = request.app.state.container
+    value = container.db.get_setting(key)
+    return {"key": key, "value": value or ""}
+
+
+class SettingPayload(BaseModel):
+    key: str
+    value: str
+
+
+@router.post("/api/settings")
+async def save_setting(
+    request: Request,
+    key: str = Form(None),
+    value: str = Form(None),
+):
+    """Save a single platform setting (form or JSON body)."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+
+    # Support JSON body as fallback
+    if key is None:
+        try:
+            body = await request.json()
+            key = body.get("key", "")
+            value = body.get("value", "")
+        except Exception:
+            raise HTTPException(400, "key is required (form or JSON)")
+
     key   = key.strip()
     value = value.strip()
     if not key:
@@ -377,3 +404,46 @@ async def delete_userscript(request: Request, uid: str):
     file_path.unlink()
     _update_index()
     return {"ok": True}
+
+
+# ── QR Code Image Upload ──────────────────────────────────────────────────────
+
+_QR_DIR = get_project_root() / "data" / "uploads"
+_QR_DIR.mkdir(parents=True, exist_ok=True)
+
+@router.post("/api/settings/upload-qr")
+async def upload_qr_image(request: Request, file: UploadFile = File(...)):
+    """Upload a QR code image for UPI payments. Saves as data/uploads/qr_code.png"""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Only image files allowed")
+    
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else "png"
+    if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
+        ext = "png"
+    filename = f"qr_code.{ext}"
+    filepath = _QR_DIR / filename
+    
+    content = await file.read()
+    filepath.write_bytes(content)
+    
+    # Save the URL to settings
+    container = request.app.state.container
+    qr_url = f"/admin/api/settings/qr-image"
+    container.db.set_setting("payment.qr_image_url", qr_url)
+    
+    return {"ok": True, "url": qr_url, "filename": filename}
+
+
+@router.get("/api/settings/qr-image")
+async def get_qr_image():
+    """Serve the uploaded QR code image."""
+    for ext in ("png", "jpg", "jpeg", "gif", "webp"):
+        fp = _QR_DIR / f"qr_code.{ext}"
+        if fp.exists():
+            media = { "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                      "gif": "image/gif", "webp": "image/webp" }
+            return FileResponse(fp, media_type=media.get(ext, "image/png"))
+    raise HTTPException(404, "No QR image uploaded")

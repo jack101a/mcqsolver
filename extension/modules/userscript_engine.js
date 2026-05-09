@@ -60,6 +60,7 @@
 `;
 
     async function injectShim() {
+        if (!chrome.runtime?.id) return;
         try {
             await chrome.runtime.sendMessage({
                 type: 'EXECUTE_IN_MAIN',
@@ -68,7 +69,7 @@
             });
             console.log('[Userscript Engine] GM shim execution requested');
         } catch (e) {
-            console.error('[Userscript Engine] Failed to request GM shim injection:', e);
+            console.debug('[Userscript Engine] Failed to request GM shim injection:', e);
         }
     }
 

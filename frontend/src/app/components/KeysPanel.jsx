@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Key, Plus, ShieldCheck, XCircle, Inbox } from "lucide-react";
+import { Key, Plus, ShieldCheck, XCircle, Inbox, Users, Loader2 } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
 import { EmptyState } from "./EmptyState";
+import { apiGet } from "../../api/client";
 
 export function KeysPanel({
   apiKeys,
@@ -22,7 +23,8 @@ export function KeysPanel({
 }) {
   const { isDark, t_textHeading, t_textMuted, t_borderLight, glassPanel, glassButton, glassInput, badgeSuccess, badgeWarning, dangerButton, solidButton } = useThemeContext();
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       {/* API Keys Container */}
       <div className={`rounded-2xl flex flex-col transition-colors duration-500 overflow-hidden ${glassPanel}`}>
         <div className={`p-5 border-b flex items-center gap-3 ${t_borderLight}`}>
@@ -85,13 +87,19 @@ export function KeysPanel({
                     <td className={`py-3 px-2 text-xs hidden sm:table-cell ${t_textMuted}`}>{key.expires_at_display}</td>
                     <td className="py-3 px-2 text-right">
                       <div className="inline-flex items-center gap-2">
-                        <button onClick={() => handleViewStoredKey(key.id)} className={glassButton} aria-label={`View key ${key.name}`}>View</button>
-                        {key.enabled ? (
-                          <button onClick={() => handleRevokeKey(key.id)} className={`${dangerButton} sm:opacity-0 group-hover:opacity-100 focus:opacity-100`}>Revoke</button>
+                        {typeof key.id === 'string' && key.id.startsWith('U-') ? (
+                          <span className={`text-xs italic ${t_textMuted}`}>Managed in Users</span>
                         ) : (
                           <>
-                            <span className={`text-xs ${t_textMuted}`}>{key.revoked_at_display}</span>
-                            <button onClick={() => handleDeleteRevokedKey(key.id)} className={dangerButton}>Delete</button>
+                            <button onClick={() => handleViewStoredKey(key.id)} className={glassButton} aria-label={`View key ${key.name}`}>View</button>
+                            {key.enabled ? (
+                              <button onClick={() => handleRevokeKey(key.id)} className={`${dangerButton} sm:opacity-0 group-hover:opacity-100 focus:opacity-100`}>Revoke</button>
+                            ) : (
+                              <>
+                                <span className={`text-xs ${t_textMuted}`}>{key.revoked_at_display}</span>
+                                <button onClick={() => handleDeleteRevokedKey(key.id)} className={dangerButton}>Delete</button>
+                              </>
+                            )}
                           </>
                         )}
                       </div>
@@ -191,6 +199,82 @@ export function KeysPanel({
             </form>
           </div>
         </div>
+      </div>
+    </div>
+
+    {/* User-linked API keys (from Telegram bot registrations) */}
+    <div className="mt-6">
+      <UserKeysSection />
+    </div>
+    </>
+  );
+}
+
+// ── User API Keys Section (self-contained, fetches its own data) ─────────────
+
+function UserKeysSection() {
+  const { t_textHeading, t_textMuted, t_borderLight, glassPanel, badgeSuccess, badgeWarning } = useThemeContext();
+  const [userKeys, setUserKeys] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiGet("/admin/api/user-keys?limit=100")
+      .then(data => { setUserKeys(data.keys || []); setTotal(data.total || 0); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div className={`rounded-2xl p-6 ${glassPanel} flex justify-center`}>
+      <Loader2 className="animate-spin text-indigo-500" size={24} />
+    </div>
+  );
+
+  if (userKeys.length === 0) return null;
+
+  return (
+    <div className={`rounded-2xl flex flex-col transition-colors duration-500 overflow-hidden ${glassPanel}`}>
+      <div className={`p-5 border-b flex items-center gap-3 ${t_borderLight}`}>
+        <div className="p-2 bg-emerald-500/20 text-emerald-500 rounded-lg backdrop-blur-md"><Users size={20}/></div>
+        <div>
+          <h2 className={`text-lg font-semibold tracking-wide drop-shadow-sm ${t_textHeading}`}>User API Keys</h2>
+          <p className={`text-xs ${t_textMuted}`}>Keys created via Telegram bot registration — {total} total</p>
+        </div>
+      </div>
+      <div className="overflow-auto max-h-72 p-5 custom-scrollbar">
+        <table className="w-full text-sm text-left whitespace-nowrap">
+          <thead>
+            <tr className={`border-b ${t_textMuted} ${t_borderLight}`}>
+              <th className="pb-3 font-medium px-2">User</th>
+              <th className="pb-3 font-medium px-2">Mobile</th>
+              <th className="pb-3 font-medium px-2">Key Prefix</th>
+              <th className="pb-3 font-medium px-2">Version</th>
+              <th className="pb-3 font-medium px-2">Status</th>
+              <th className="pb-3 font-medium px-2">Issued</th>
+              <th className="pb-3 font-medium px-2">Last Used</th>
+              <th className="pb-3 font-medium px-2">Usage</th>
+              <th className="pb-3 font-medium px-2">Expires</th>
+            </tr>
+          </thead>
+          <tbody className={`divide-y ${t_borderLight}`}>
+            {userKeys.map(k => (
+              <tr key={`uk-${k.id}`} className="group">
+                <td className={`py-3 px-2 font-medium ${t_textHeading}`}>{k.user_name || "—"}</td>
+                <td className={`py-3 px-2 text-xs ${t_textMuted}`}>{k.user_mobile || "—"}</td>
+                <td className={`py-3 px-2 font-mono text-xs ${t_textHeading}`}>{k.key_prefix || "—"}</td>
+                <td className={`py-3 px-2 text-xs ${t_textMuted}`}>v{k.key_version}</td>
+                <td className="py-3 px-2">
+                  {k.status === "active" ? <span className={badgeSuccess}>Active</span> : <span className={badgeWarning}>{k.status}</span>}
+                </td>
+                <td className={`py-3 px-2 text-xs ${t_textMuted}`}>{k.issued_at ? new Date(k.issued_at).toLocaleDateString() : "—"}</td>
+                <td className={`py-3 px-2 text-xs ${t_textMuted}`}>{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : "—"}</td>
+                <td className={`py-3 px-2 text-xs ${t_textMuted}`}>{k.usage_count || 0}</td>
+                <td className={`py-3 px-2 text-xs ${t_textMuted}`}>{k.expires_at ? new Date(k.expires_at).toLocaleDateString() : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

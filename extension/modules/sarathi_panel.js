@@ -9,6 +9,7 @@ if (window.__SP_PANEL_MERGED__) return; window.__SP_PANEL_MERGED__ = true;
 // - Edit/Zoom buttons तभी दिखेंगे जब image उपलब्ध होगी; editor Upload वैसा ही है; Apply केवल VCAM अपडेट करता है (panel circle नहीं).
 
 if (location.hostname !== 'sarathi.parivahan.gov.in') return;
+if (typeof chrome === "undefined" || !chrome.runtime?.id) return;
 
 // Activation gate removed for the current build.
 // Panel starts unlocked and does not persist any serial/hash state.
@@ -27,6 +28,7 @@ function showPanelToast(msg, variant='info', duration=1600){
 
 // ========== IMAGE DEFAULTS ==========
 function getImageDefaults(cb){
+  if (typeof chrome === "undefined" || !chrome.runtime?.id) return;
   chrome.storage.local.get([SP_IMG_DEFAULTS_KEY], (d)=>{
     const def = d[SP_IMG_DEFAULTS_KEY] || { bri:1, con:1, sat:1, hue:0, fmt:'image/jpeg', qual:0.92 };
     cb(def);
@@ -794,7 +796,7 @@ async function handleIncomingImage(dataUrl, fromStorage){
       }catch{}
     })();
   `;
-  chrome.runtime.sendMessage({ type: 'SP_EXEC', code: pageInstaller }, ()=>{});
+  if (chrome.runtime?.id) chrome.runtime.sendMessage({ type: 'SP_EXEC', code: pageInstaller }, ()=>{});
 
   window.addEventListener('message', async (ev) => {
     const d = ev.data; if (!d || d.__sp_data_url !== true) return;
@@ -1130,7 +1132,7 @@ function installDomImageValueWatcher(){
       } catch{}
     })();
   `;
-  chrome.runtime.sendMessage({ type: 'SP_EXEC', code: shimCode }, ()=>{
+  if (chrome.runtime?.id) chrome.runtime.sendMessage({ type: 'SP_EXEC', code: shimCode }, ()=>{
     chrome.storage.local.get([SP_VCAM_ENABLED_KEY, SP_VCAM_FORCE_KEY, SP_VCAM_ZOOM_KEY], d=>{
       const enabled = (d[SP_VCAM_ENABLED_KEY] == null) ? true : !!d[SP_VCAM_ENABLED_KEY];
       const forceAll = true; // enforce

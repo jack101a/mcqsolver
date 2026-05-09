@@ -19,6 +19,12 @@ class SettingsRepository(BaseRepository):
         "alerts.callmebot_apikey":  "",
         # General
         "platform.name":          "Unified Platform",
+        # Telegram
+        "telegram.bot_token":     "",
+        "telegram.bot_enabled":   "false",
+        # Payment
+        "payment.upi_id":         "",
+        "payment.qr_image_url":   "",
     }
 
     _SETTING_DESCRIPTIONS: dict[str, str] = {
@@ -31,6 +37,10 @@ class SettingsRepository(BaseRepository):
         "alerts.callmebot_phone":   "Admin WhatsApp number in E.164 format (+91XXXXXXXXXX)",
         "alerts.callmebot_apikey":  "CallMeBot API key (get from callmebot.com)",
         "platform.name":            "Display name shown in admin dashboard",
+        "telegram.bot_token":       "Telegram Bot API token from @BotFather",
+        "telegram.bot_enabled":     "Enable Telegram bot (true/false)",
+        "payment.upi_id":           "UPI ID shown to users during payment (e.g. yourname@upi)",
+        "payment.qr_image_url":     "URL of QR code image for UPI payments",
     }
 
     def get_setting(self, key: str, default: str | None = None) -> str:

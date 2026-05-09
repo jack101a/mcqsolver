@@ -43,7 +43,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "onnx_height": 54,
         "onnx_width": 250,
     },
-    "storage": {"sqlite_path": "backend/logs/app.db"},
+    "storage": {"sqlite_path": "backend/logs/app.db", "database_url": "", "db_type": "sqlite"},
+    "redis": {"enabled": False, "url": "redis://localhost:6379/0", "prefix": "up:"},
     "retrain": {"worker_enabled": False},
     # ── Exam service config ────────────────────────────────────────────────────
     "exam": {
@@ -61,6 +62,16 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "whatsapp_enabled": False,
         "callmebot_phone": "",        # E.164 format: +91xxxxxxxxxx
         "callmebot_apikey": "",
+    },
+    # ── Telegram bot ────────────────────────────────────────────────────────────
+    "telegram": {
+        "bot_token": "",              # from @BotFather
+        "bot_enabled": False,
+    },
+    # ── Payments ──────────────────────────────────────────────────────────────
+    "payment": {
+        "upi_id": "",                 # e.g. yourname@upi
+        "qr_image_url": "",           # hosted QR code image URL
     },
 }
 
@@ -135,6 +146,22 @@ class ModelConfig(BaseModel):
 
 class StorageConfig(BaseModel):
     sqlite_path: str
+    # PostgreSQL support (used when DB_TYPE=postgresql)
+    database_url: str = ""
+    db_type: str = "sqlite"  # "sqlite" | "postgresql"
+
+    @field_validator("db_type")
+    @classmethod
+    def validate_db_type(cls, v: str) -> str:
+        if v not in ("sqlite", "postgresql"):
+            raise ValueError(f"db_type must be 'sqlite' or 'postgresql', got '{v}'")
+        return v
+
+
+class RedisConfig(BaseModel):
+    enabled: bool = False
+    url: str = "redis://localhost:6379/0"
+    prefix: str = "up:"  # key prefix for namespacing
 
 
 class RetrainConfig(BaseModel):
@@ -158,6 +185,16 @@ class AlertsConfig(BaseModel):
     callmebot_apikey: str = ""
 
 
+class TelegramConfig(BaseModel):
+    bot_token: str = ""
+    bot_enabled: bool = False
+
+
+class PaymentConfig(BaseModel):
+    upi_id: str = ""
+    qr_image_url: str = ""
+
+
 class Settings(BaseModel):
     app_name: str = "unified-platform"
     server: ServerConfig
@@ -167,9 +204,12 @@ class Settings(BaseModel):
     logging: LoggingConfig
     model: ModelConfig
     storage: StorageConfig
+    redis: RedisConfig = Field(default_factory=RedisConfig)
     retrain: RetrainConfig = Field(default_factory=RetrainConfig)
     exam: ExamConfig = Field(default_factory=ExamConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    payment: PaymentConfig = Field(default_factory=PaymentConfig)
 
 
 def _read_yaml_config(config_path: Path) -> dict[str, Any]:
@@ -218,6 +258,12 @@ def get_settings() -> Settings:
     config_dict.setdefault("storage", {})
     sqlite_raw = os.getenv("SQLITE_PATH", config_dict["storage"].get("sqlite_path", ""))
     config_dict["storage"]["sqlite_path"] = str(_resolve_path(sqlite_raw))
+    config_dict["storage"]["database_url"] = os.getenv("DATABASE_URL", config_dict["storage"].get("database_url", ""))
+    config_dict["storage"]["db_type"] = os.getenv("DB_TYPE", config_dict["storage"].get("db_type", "sqlite")).lower()
+
+    config_dict.setdefault("redis", {})
+    config_dict["redis"]["enabled"] = os.getenv("REDIS_ENABLED", str(config_dict["redis"].get("enabled", False))).lower() in ("1", "true", "yes")
+    config_dict["redis"]["url"] = os.getenv("REDIS_URL", config_dict["redis"].get("url", "redis://localhost:6379/0"))
 
     config_dict.setdefault("model", {})
     onnx_raw = os.getenv("ONNX_PATH", config_dict["model"].get("onnx_path", ""))
@@ -231,6 +277,10 @@ def get_settings() -> Settings:
     config_dict.setdefault("alerts", {})
     config_dict["alerts"]["callmebot_phone"]  = os.getenv("CALLMEBOT_PHONE",  config_dict["alerts"].get("callmebot_phone", ""))
     config_dict["alerts"]["callmebot_apikey"] = os.getenv("CALLMEBOT_APIKEY", config_dict["alerts"].get("callmebot_apikey", ""))
+
+    config_dict.setdefault("telegram", {})
+    config_dict["telegram"]["bot_token"]   = os.getenv("TELEGRAM_BOT_TOKEN", config_dict["telegram"].get("bot_token", ""))
+    config_dict["telegram"]["bot_enabled"] = os.getenv("TELEGRAM_BOT_ENABLED", str(config_dict["telegram"].get("bot_enabled", False))).lower() in ("1", "true", "yes")
 
     config_dict.setdefault("server", {})
     config_dict["server"]["debug"] = os.getenv("DEBUG", str(config_dict["server"].get("debug", False))).lower() in {"1", "true", "yes"}

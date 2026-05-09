@@ -1063,7 +1063,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     return { ok: false, error: String(e) };
                 }
             },
-            args: [code, name, id]
+            args: [code, name ?? null, id ?? null]
         }, (results) => {
             if (chrome.runtime.lastError) {
                 sendResponse({ ok: false, error: chrome.runtime.lastError.message });

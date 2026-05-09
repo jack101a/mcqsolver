@@ -209,7 +209,8 @@ export function ExamStatsPanel({
             </div>
           </div>
         </div>
-      </div>
+
+        </div>
 
       {/* Self-Learning Section */}
       <div className={`rounded-2xl p-6 ${glassPanel}`}>

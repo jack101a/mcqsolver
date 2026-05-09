@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { Download, Upload, Save, Bell, Globe, Shield, Loader2, Inbox } from "lucide-react";
+import { Download, Upload, Save, Bell, Globe, Shield, Loader2, Inbox, Send, CreditCard, Image, RotateCcw } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
 import { apiGet, apiPostJson } from "../../api/client";
 import { EmptyState } from "./EmptyState";
@@ -39,6 +39,109 @@ export function SettingsPanel({
   showToast
 }) {
   const { isDark, t_textHeading, t_textMuted, t_borderLight, t_rowHover, glassPanel, glassButton, glassInput, badgeSuccess, solidButton } = useThemeContext();
+  const [telegramToken, setTelegramToken] = useState("");
+  const [telegramSaving, setTelegramSaving] = useState(false);
+
+  useEffect(() => {
+    apiGet("/admin/api/settings/telegram.bot_token")
+      .then(d => setTelegramToken(d.value || ""))
+      .catch(() => {});
+  }, []);
+
+  const saveTelegramToken = async () => {
+    setTelegramSaving(true);
+    try {
+      await apiPostJson("/admin/api/settings", { key: "telegram.bot_token", value: telegramToken });
+      showToast("Telegram bot token saved");
+    } catch (e) {
+      showToast("Failed to save: " + e.message);
+    }
+    setTelegramSaving(false);
+  };
+
+  const [restarting, setRestarting] = useState(false);
+  const handleRestart = async () => {
+    if (!confirm("Restart the server? This will briefly interrupt service.")) return;
+    setRestarting(true);
+    try {
+      await apiPostJson("/admin/api/system/restart", {});
+      showToast("Server restarting...");
+    } catch (e) {
+      showToast("Restart failed: " + e.message);
+      setRestarting(false);
+    }
+  };
+
+  // Payment settings (UPI ID + QR)
+  const [upiId, setUpiId] = useState("");
+  const [payeeName, setPayeeName] = useState("");
+  const [notePrefix, setNotePrefix] = useState("");
+  const [paymentCurrency, setPaymentCurrency] = useState("INR");
+  const [qrUrl, setQrUrl] = useState("");
+  const [qrUploading, setQrUploading] = useState(false);
+  const [paymentSaving, setPaymentSaving] = useState(false);
+
+  useEffect(() => {
+    apiGet("/admin/api/settings/payment.upi_id")
+      .then(d => setUpiId(d.value || ""))
+      .catch(() => {});
+    apiGet("/admin/api/settings/payment.payee_name")
+      .then(d => setPayeeName(d.value || "ta-ta Extension"))
+      .catch(() => {});
+    apiGet("/admin/api/settings/payment.note_prefix")
+      .then(d => setNotePrefix(d.value || "Reg"))
+      .catch(() => {});
+    apiGet("/admin/api/settings/payment.currency")
+      .then(d => setPaymentCurrency(d.value || "INR"))
+      .catch(() => {});
+    apiGet("/admin/api/settings/payment.qr_image_url")
+      .then(d => setQrUrl(d.value || ""))
+      .catch(() => {});
+  }, []);
+
+  const handleQrUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setQrUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const resp = await fetch("/admin/api/settings/upload-qr", {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        setQrUrl(data.url);
+        showToast("QR image uploaded");
+      } else {
+        showToast("Upload failed: " + (data.detail || "unknown"));
+      }
+    } catch (err) {
+      showToast("Upload failed: " + err.message);
+    }
+    setQrUploading(false);
+  };
+
+  const savePaymentSettings = async () => {
+    setPaymentSaving(true);
+    try {
+      await apiPostJson("/admin/api/settings/bulk", {
+        settings: {
+          "payment.upi_id": upiId,
+          "payment.payee_name": payeeName,
+          "payment.note_prefix": notePrefix,
+          "payment.currency": paymentCurrency,
+          "payment.qr_image_url": qrUrl,
+        }
+      });
+      showToast("Payment settings saved");
+    } catch (e) {
+      showToast("Failed to save: " + e.message);
+    }
+    setPaymentSaving(false);
+  };
   const [globalSettings, setGlobalSettings] = useState({});
   const [loadingGlobal, setLoadingGlobal] = useState(true);
   const [savingGlobal, setSavingGlobal] = useState(false);
@@ -322,6 +425,121 @@ export function SettingsPanel({
               {apiKeys.length === 0 && <EmptyState icon={Inbox} title="No API keys registered" />}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Telegram Bot Settings */}
+      <div className={`rounded-2xl p-6 transition-colors duration-500 ${glassPanel}`}>
+        <div className="flex items-center gap-3 mb-4">
+          <Send size={18} className="text-blue-400" />
+          <h3 className={`text-base font-semibold ${t_textHeading}`}>Telegram Bot</h3>
+        </div>
+        <p className={`text-xs mb-4 ${t_textMuted}`}>
+          Set this to enable Telegram registration. Users can register, select plans, and submit payments via bot.
+          Run with: <code className="px-1 py-0.5 rounded bg-white/5 text-xs">TELEGRAM_BOT_TOKEN=xxx python -m app.services.telegram_bot</code>
+        </p>
+        <div className="flex gap-3 items-end">
+          <div className="flex-1">
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>Bot Token (from @BotFather)</label>
+            <input 
+              type="password"
+              className={glassInput} 
+              value={telegramToken} 
+              onChange={(e) => setTelegramToken(e.target.value)}
+              placeholder="123456:ABC-DEF1234ghikl..." 
+            />
+          </div>
+          <button onClick={saveTelegramToken} disabled={telegramSaving} className={solidButton}>
+            {telegramSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {telegramSaving ? "Saving..." : "Save"}
+          </button>
+        </div>
+        <p className={`text-[11px] mt-2 ${t_textMuted}`}>
+          Also configurable via <code className="px-1 py-0.5 rounded bg-white/5 text-xs">TELEGRAM_BOT_TOKEN</code> in <code className="px-1 py-0.5 rounded bg-white/5 text-xs">sa_helper/config/.env</code>
+        </p>
+        <div className="mt-4 pt-3 border-t border-white/[0.05]">
+          <button
+            onClick={handleRestart}
+            disabled={restarting}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+              isDark ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/25' : 'bg-amber-100 text-amber-700 border border-amber-300 hover:bg-amber-200'
+            }`}
+          >
+            {restarting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+            {restarting ? "Restarting..." : "Restart Server"}
+          </button>
+          <p className={`text-[11px] mt-1.5 ${t_textMuted}`}>
+            Restart after changing bot token or payment settings.
+          </p>
+        </div>
+      </div>
+
+      {/* Payment Settings (UPI + QR) */}
+      <div className={`rounded-2xl p-6 transition-colors duration-500 ${glassPanel}`}>
+        <div className="flex items-center gap-3 mb-4">
+          <CreditCard size={18} className="text-emerald-400" />
+          <h3 className={`text-base font-semibold ${t_textHeading}`}>Payment Settings</h3>
+        </div>
+        <p className={`text-xs mb-4 ${t_textMuted}`}>
+          Configure UPI ID and QR code shown to users during Telegram bot registration.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>UPI ID</label>
+            <input 
+              className={glassInput} 
+              value={upiId} 
+              onChange={(e) => setUpiId(e.target.value)}
+              placeholder="yourname@upi" 
+            />
+          </div>
+          <div>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>Payee Name</label>
+            <input 
+              className={glassInput} 
+              value={payeeName} 
+              onChange={(e) => setPayeeName(e.target.value)}
+              placeholder="ta-ta Extension" 
+            />
+          </div>
+          <div>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>Payment Note Prefix</label>
+            <input 
+              className={glassInput} 
+              value={notePrefix} 
+              onChange={(e) => setNotePrefix(e.target.value)}
+              placeholder="Reg" 
+            />
+          </div>
+          <div>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>Currency</label>
+            <input 
+              className={glassInput} 
+              value={paymentCurrency} 
+              onChange={(e) => setPaymentCurrency(e.target.value)}
+              placeholder="INR" 
+              maxLength={3}
+            />
+          </div>
+          <div>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>QR Code Image</label>
+            <div className="flex gap-2 items-center">
+              <label className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm cursor-pointer transition-all ${isDark ? 'bg-white/10 hover:bg-white/15' : 'bg-gray-100 hover:bg-gray-200'} ${t_textHeading}`}>
+                {qrUploading ? <Loader2 size={14} className="animate-spin" /> : <Image size={14} />}
+                {qrUploading ? "Uploading..." : "Upload QR"}
+                <input type="file" accept="image/*" onChange={handleQrUpload} className="hidden" />
+              </label>
+              {qrUrl && (
+                <span className={`text-xs truncate max-w-[200px] ${t_textMuted}`}>
+                  {qrUrl.startsWith("/admin/") ? "Uploaded ✓" : qrUrl}
+                </span>
+              )}
+            </div>
+          </div>
+          <button onClick={savePaymentSettings} disabled={paymentSaving} className={solidButton}>
+            {paymentSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {paymentSaving ? "Saving..." : "Save Payment Settings"}
+          </button>
         </div>
       </div>
     </div>

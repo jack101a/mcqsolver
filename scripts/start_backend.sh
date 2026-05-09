@@ -9,7 +9,17 @@ else
     PYTHON_BIN="python3"
 fi
 
+# Load .env for TELEGRAM_BOT_TOKEN etc.
+if [ -f "../config/.env" ]; then
+    export $(grep -v '^#' ../config/.env | grep -v '^$' | xargs)
+fi
+
 mkdir -p logs
-$PYTHON_BIN -m uvicorn app.main:app --host 0.0.0.0 --port 8780 > logs/server.log 2>&1 &
+$PYTHON_BIN -u -m uvicorn app.main:app --host 0.0.0.0 --port 8780 > logs/server.log 2>&1 &
 disown
 echo "Backend started on port 8780. Logs: backend/logs/server.log"
+
+# Start Telegram bot (reads TELEGRAM_BOT_TOKEN from env or DB)
+$PYTHON_BIN -u -m app.services.telegram_bot > logs/telegram_bot.log 2>&1 &
+disown
+echo "Telegram bot started. Logs: backend/logs/telegram_bot.log"

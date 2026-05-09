@@ -328,7 +328,7 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
     """
     container  = request.app.state.container
     key_record = request.state.api_key_record
-    db         = container.database
+    db         = container.db
 
     # Check if learning is enabled
     learning_enabled = db.get_setting("exam.learning_enabled", "true").lower() in ("true", "1", "yes", "on")

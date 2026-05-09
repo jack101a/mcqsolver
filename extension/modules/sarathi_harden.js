@@ -5,6 +5,7 @@
     window.SarathiHarden = {
         init() {
             if (!location.hostname.includes('sarathi.parivahan.gov.in')) return;
+            if (typeof chrome === "undefined" || !chrome.runtime?.id) return;
             this.early403Guard();
             this.hardenPage();
             
@@ -88,7 +89,7 @@
             const dataUrl = d.text || d.dataUrl;
             if (dataUrl && dataUrl.includes('data:image/')) {
                 console.log(`[Automation] Captured ${d.type} Image. Updating VCAM...`);
-                chrome.runtime.sendMessage({ type: 'VCAM_UPDATE_STATE', state: { image: dataUrl } });
+                if (chrome.runtime?.id) chrome.runtime.sendMessage({ type: 'VCAM_UPDATE_STATE', state: { image: dataUrl } });
             }
         }
     });
@@ -98,6 +99,7 @@
 
         init() {
             if (!location.hostname.includes('sarathi.parivahan.gov.in')) return;
+            if (typeof chrome === "undefined" || !chrome.runtime?.id) return;
             this.scanOnce();
             this.startObserver();
             console.log('[Automation] Sarathi Image Detector active');
@@ -125,7 +127,7 @@
             if (du && du !== this.lastImage) {
                 this.lastImage = du;
                 console.log('[Automation] User photo detected, saving to storage...');
-                chrome.storage.local.set({ stall_user_photo: du });
+                if (chrome.runtime?.id) chrome.storage.local.set({ stall_user_photo: du });
                 return true;
             }
             return false;

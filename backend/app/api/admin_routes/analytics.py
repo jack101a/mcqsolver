@@ -79,14 +79,42 @@ async def admin_bootstrap(request: Request):
     usage = container.db.get_usage_summary()
     labels_by_file = container.db.get_failed_payload_labels()
     api_keys = container.db.get_all_api_keys()
+    
+    # Merge UserApiKeys from SQLAlchemy
+    from app.core.db import get_session
+    from app.core.models import UserApiKey, User
+    session = get_session()
+    try:
+        user_keys = session.query(UserApiKey).order_by(UserApiKey.issued_at.desc()).all()
+        for uk in user_keys:
+            user = session.query(User).filter(User.id == uk.user_id).first()
+            api_keys.append({
+                "id": f"U-{uk.id}",
+                "name": f"User: {user.full_name if user else 'Unknown'} ({uk.key_prefix_display})",
+                "key_hash": uk.key_hash,
+                "enabled": uk.status == "active",
+                "expires_at": uk.expires_at,
+                "created_at": uk.issued_at,
+                "revoked_at": uk.revoked_at,
+                "is_master": False,
+                "key_type": "user",
+            })
+    finally:
+        session.close()
+
     for key in api_keys:
-        key_id = int(key["id"])
+        key_id = key["id"]
         key["created_at_display"] = _fmt_dt(key.get("created_at"))
         key["expires_at_display"] = _fmt_dt(key.get("expires_at"))
         key["revoked_at_display"] = _fmt_dt(key.get("revoked_at"))
-        key["allowed_domains"] = container.db.get_api_key_allowed_domains(key_id)
-        key["rate_limit"] = container.db.get_api_key_rate_limit(key_id) or {}
-        key["device_binding"] = container.db.get_api_key_device_binding(key_id)
+        if isinstance(key_id, int) or (isinstance(key_id, str) and key_id.isdigit()):
+            key["allowed_domains"] = container.db.get_api_key_allowed_domains(int(key_id))
+            key["rate_limit"] = container.db.get_api_key_rate_limit(int(key_id)) or {}
+            key["device_binding"] = container.db.get_api_key_device_binding(int(key_id))
+        else:
+            key["allowed_domains"] = []
+            key["rate_limit"] = {}
+            key["device_binding"] = {}
     datasets_files = await _collect_datasets_files(container, labels_by_file)
     return {
         "usage": usage,
@@ -142,7 +170,7 @@ async def get_exam_learning_stats(request: Request) -> Any:
     if denied:
         return denied
     container = request.app.state.container
-    db = container.database
+    db = container.db
     
     learned_stats = db.get_exam_learned_stats()
     attempt_stats = db.get_exam_attempts_stats()
@@ -162,7 +190,7 @@ async def toggle_exam_learning(request: Request) -> Any:
     if denied:
         return denied
     container = request.app.state.container
-    db = container.database
+    db = container.db
     
     body = await request.json()
     enabled = str(body.get("enabled", True)).lower() in ("true", "1", "yes", "on")

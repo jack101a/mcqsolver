@@ -6,6 +6,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SkeletonCard, SkeletonTableRow } from "./components/Skeleton";
 
 const DashboardPanel         = React.lazy(() => import("./components/DashboardPanel").then(m => ({ default: m.DashboardPanel })));
+const SubscriptionsPanel      = React.lazy(() => import("./components/SubscriptionsPanel").then(m => ({ default: m.SubscriptionsPanel })));
 const UserscriptsPanel       = React.lazy(() => import("./components/UserscriptsPanel").then(m => ({ default: m.UserscriptsPanel })));
 const ModelsPanel            = React.lazy(() => import("./components/ModelsPanel").then(m => ({ default: m.ModelsPanel })));
 const MappingsPanel          = React.lazy(() => import("./components/MappingsPanel").then(m => ({ default: m.MappingsPanel })));
@@ -176,6 +177,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={dashboardPage} />
+          <Route path="/subscriptions" element={<SubscriptionsPanel showToast={showToast} />} />
           <Route path="/userscripts" element={<UserscriptsPanel userscripts={userscripts} refreshUserscripts={refresh} showToast={showToast} />} />
           <Route path="/models" element={
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -186,7 +188,7 @@ export function App() {
           <Route path="/autofill" element={<AutofillProposalsPanel autofillProposals={autofillProposals} {...proposalHandlers} />} />
           <Route path="/captcha" element={<CaptchaProposalsPanel mappings={mappings} handleRemoveMapping={modelHandlers.handleRemoveMapping} handleQuickEditMapping={modelHandlers.handleQuickEditMapping} captchaProposals={captchaProposals} models={models} {...proposalHandlers} />} />
           <Route path="/exam" element={<ExamStatsPanel examStats={examStats} showToast={showToast} />} />
-          <Route path="/settings" element={<SettingsPanel apiKeys={apiKeys} access={access} settingsKeyId={settingsKeyId} settingsAllDomains={settingsAllDomains} setSettingsAllDomains={setSettingsAllDomains} settingsDomainSelections={settingsDomainSelections} settingsKeyRpm={settingsKeyRpm} setSettingsKeyRpm={setSettingsKeyRpm} settingsKeyBurst={settingsKeyBurst} setSettingsKeyBurst={setSettingsKeyBurst} settingsCustomDomain={settingsCustomDomain} setSettingsCustomDomain={setSettingsCustomDomain} cloudBackupConfigured={cloudBackupConfigured} {...settingsHandlers} />} />
+          <Route path="/settings" element={<SettingsPanel apiKeys={apiKeys} access={access} settingsKeyId={settingsKeyId} settingsAllDomains={settingsAllDomains} setSettingsAllDomains={setSettingsAllDomains} settingsDomainSelections={settingsDomainSelections} settingsKeyRpm={settingsKeyRpm} setSettingsKeyRpm={setSettingsKeyRpm} settingsKeyBurst={settingsKeyBurst} setSettingsKeyBurst={setSettingsKeyBurst} settingsCustomDomain={settingsCustomDomain} setSettingsCustomDomain={setSettingsCustomDomain} cloudBackupConfigured={cloudBackupConfigured} showToast={showToast} {...settingsHandlers} />} />
         </Routes>
         </Suspense>
       </DashboardLayout>

@@ -3,12 +3,14 @@ import PropTypes from "prop-types";
 import { NavLink, useLocation } from "react-router-dom";
 import { 
   LayoutDashboard, Database, Activity, BrainCircuit, Settings, 
-  Sun, Moon, LogOut, MapPin, Download, Code, Menu, X
+  Sun, Moon, LogOut, MapPin, Download, Code, Menu, X,
+  Users, CreditCard
 } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
 
 const NAV_ITEMS = [
   { path: "/dashboard",   label: "Dashboard",      icon: LayoutDashboard },
+  { path: "/subscriptions", label: "Subscriptions",  icon: CreditCard },
   { path: "/userscripts", label: "Userscripts",     icon: Code },
   { path: "/models",      label: "Models",          icon: Database },
   { path: "/autofill",    label: "Autofill Rules",  icon: Activity },

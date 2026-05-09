@@ -1,0 +1,197 @@
+import React, { useState, useEffect, useCallback } from "react";
+import PropTypes from "prop-types";
+import { Tag, Loader2, Plus, Edit3, Save, X } from "lucide-react";
+import { useThemeContext } from "../context/ThemeContext";
+import { apiGet, apiPostJson, apiPutJson } from "../../api/client";
+
+export function PlansPanel({ showToast }) {
+  const { t_textHeading, t_textMuted, t_borderLight, glassPanel, glassInput, solidButton, iconBtn, isDark } = useThemeContext();
+  const [plans, setPlans] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ code: "", name: "", description: "", monthly_limit: 1000, duration_days: 30, price_amount: 0 });
+  const [saving, setSaving] = useState(false);
+
+  const fetchPlans = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiGet("/admin/api/plans");
+      setPlans(data.plans || []);
+    } catch (e) {
+      showToast("Failed to load plans", "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => { fetchPlans(); }, [fetchPlans]);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await apiPostJson("/admin/api/plans", form);
+      showToast("Plan created");
+      setShowCreate(false);
+      setForm({ code: "", name: "", description: "", monthly_limit: 1000, duration_days: 30, price_amount: 0 });
+      fetchPlans();
+    } catch (e) {
+      showToast(e.message || "Failed to create plan", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdate = async (planId) => {
+    setSaving(true);
+    try {
+      await apiPutJson(`/admin/api/plans/${planId}`, form);
+      showToast("Plan updated");
+      setEditingId(null);
+      fetchPlans();
+    } catch (e) {
+      showToast(e.message || "Failed to update plan", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEdit = (plan) => {
+    setEditingId(plan.id);
+    setForm({
+      code: plan.code, name: plan.name, description: plan.description || "",
+      monthly_limit: plan.monthly_limit, duration_days: plan.duration_days, price_amount: plan.price_amount,
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-emerald-500/20 text-emerald-500 rounded-lg backdrop-blur-md">
+            <Tag size={20} />
+          </div>
+          <div>
+            <h2 className={`text-lg font-semibold ${t_textHeading}`}>Subscription Plans</h2>
+            <p className={`text-xs ${t_textMuted}`}>{plans.length} plans</p>
+          </div>
+        </div>
+        <button onClick={() => { setShowCreate(true); setForm({ code: "", name: "", description: "", monthly_limit: 1000, duration_days: 30, price_amount: 0 }); }} className={solidButton}>
+          <Plus size={16} /> Add Plan
+        </button>
+      </div>
+
+      {/* Plans Grid */}
+      <div className={`rounded-2xl overflow-hidden ${glassPanel}`}>
+        {loading ? (
+          <div className="flex items-center justify-center p-12"><Loader2 className="animate-spin text-indigo-500" size={32} /></div>
+        ) : plans.length === 0 ? (
+          <div className="p-12 text-center"><p className={t_textMuted}>No plans created yet</p></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className={`border-b ${t_borderLight}`}>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Code</th>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Name</th>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Price</th>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Limit/mo</th>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Duration</th>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Active</th>
+                  <th className={`text-right p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plans.map((p) => (
+                  <tr key={p.id} className={`border-b ${t_borderLight} ${isDark ? "hover:bg-white/[0.02]" : "hover:bg-black/[0.02]"}`}>
+                    {editingId === p.id ? (
+                      <>
+                        <td className="p-2"><input className={glassInput} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></td>
+                        <td className="p-2"><input className={glassInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></td>
+                        <td className="p-2"><input className={glassInput} type="number" value={form.price_amount} onChange={(e) => setForm({ ...form, price_amount: parseInt(e.target.value) || 0 })} /></td>
+                        <td className="p-2"><input className={glassInput} type="number" value={form.monthly_limit} onChange={(e) => setForm({ ...form, monthly_limit: parseInt(e.target.value) || 0 })} /></td>
+                        <td className="p-2"><input className={glassInput} type="number" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: parseInt(e.target.value) || 0 })} /></td>
+                        <td className="p-2">—</td>
+                        <td className="p-2">
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => handleUpdate(p.id)} className={iconBtn} disabled={saving}><Save size={14} className="text-emerald-400" /></button>
+                            <button onClick={() => setEditingId(null)} className={iconBtn}><X size={14} /></button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className={`p-3 font-mono text-xs font-medium ${t_textHeading}`}>{p.code}</td>
+                        <td className={`p-3 ${t_textHeading}`}>{p.name}</td>
+                        <td className={`p-3 font-medium text-emerald-400`}>₹{(p.price_amount / 100).toFixed(2)}</td>
+                        <td className={`p-3 ${t_textHeading}`}>{p.monthly_limit?.toLocaleString()}</td>
+                        <td className={`p-3 ${t_textMuted}`}>{p.duration_days} days</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.is_active ? "bg-emerald-500/20 text-emerald-400" : "bg-slate-500/20 text-slate-400"}`}>
+                            {p.is_active ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <button onClick={() => openEdit(p)} className={iconBtn} title="Edit"><Edit3 size={14} /></button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Create Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
+          <div className={`${glassPanel} rounded-2xl p-6 w-full max-w-md border ${t_borderLight}`} onClick={(e) => e.stopPropagation()}>
+            <h3 className={`text-lg font-semibold mb-4 ${t_textHeading}`}>Create Plan</h3>
+            <form onSubmit={handleCreate} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={`text-xs block mb-1 ${t_textMuted}`}>Code</label>
+                  <input className={glassInput} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="basic_monthly" required />
+                </div>
+                <div>
+                  <label className={`text-xs block mb-1 ${t_textMuted}`}>Name</label>
+                  <input className={glassInput} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Basic Monthly" required />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className={`text-xs block mb-1 ${t_textMuted}`}>Price (paise)</label>
+                  <input className={glassInput} type="number" value={form.price_amount} onChange={(e) => setForm({ ...form, price_amount: parseInt(e.target.value) || 0 })} />
+                </div>
+                <div>
+                  <label className={`text-xs block mb-1 ${t_textMuted}`}>Limit/mo</label>
+                  <input className={glassInput} type="number" value={form.monthly_limit} onChange={(e) => setForm({ ...form, monthly_limit: parseInt(e.target.value) || 0 })} />
+                </div>
+                <div>
+                  <label className={`text-xs block mb-1 ${t_textMuted}`}>Days</label>
+                  <input className={glassInput} type="number" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: parseInt(e.target.value) || 0 })} />
+                </div>
+              </div>
+              <div>
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>Description</label>
+                <textarea className={glassInput} rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="submit" className={solidButton} disabled={saving}>{saving ? <Loader2 size={16} className="animate-spin" /> : "Create"}</button>
+                <button type="button" onClick={() => setShowCreate(false)} className={`px-4 py-2 rounded-xl text-sm ${t_textMuted} border ${t_borderLight}`}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+PlansPanel.propTypes = {
+  showToast: PropTypes.func.isRequired,
+};

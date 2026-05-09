@@ -140,8 +140,9 @@ export function PageRouter({
         settingsDomainSelections={settingsDomainSelections}
         settingsKeyRpm={settingsKeyRpm} setSettingsKeyRpm={setSettingsKeyRpm}
         settingsKeyBurst={settingsKeyBurst} setSettingsKeyBurst={setSettingsKeyBurst}
-        settingsCustomDomain={settingsCustomDomain} setSettingsCustomDomain={setSettingsCustomDomain}
+        settingsCustomDomain={settingsCustomDomain} setSettingsCustomDomain={settingsCustomDomain}
         cloudBackupConfigured={cloudBackupConfigured}
+        showToast={showToast}
         {...settingsHandlers}
       />
     );

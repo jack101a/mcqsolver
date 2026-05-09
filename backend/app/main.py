@@ -13,6 +13,7 @@ from app.api.admin import router as admin_router
 from app.api.routes import router as v1_router
 from app.core.config import get_settings
 from app.core.container import build_container
+from app.core.db import get_session
 from app.core.logging import configure_logging
 from app.middleware.auth_middleware import AuthMiddleware
 from app.middleware.logging_middleware import LoggingMiddleware
@@ -35,6 +36,15 @@ async def lifespan(application: FastAPI):
     
     # Auto-package extension on start
     container.extension_service.package_extension()
+
+    # Wire user key service for auth middleware (from container)
+    application.state.user_key_service = container.user_key_service
+
+    # Start Telegram bot (always, in background thread)
+    from app.services.telegram_bot import start_bot
+    bot = start_bot(settings=settings, session_factory=get_session)
+    if bot:
+        application.state.telegram_bot = bot
 
 
     yield
