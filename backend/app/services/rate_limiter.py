@@ -85,15 +85,15 @@ class RateLimiter:
             cutoff = now - window_seconds
             bucket["timestamps"] = [t for t in bucket["timestamps"] if t > cutoff]
 
+            # Periodic cleanup of expired buckets (before the check)
+            if int(now) % 60 == 0:
+                self._cleanup_memory()
+
             if len(bucket["timestamps"]) < max_requests:
                 bucket["timestamps"].append(now)
                 return True
 
             return False
-
-        # Periodic cleanup of expired buckets
-        if now % 60 == 0:
-            self._cleanup_memory()
 
     def _cleanup_memory(self) -> None:
         now = time.time()

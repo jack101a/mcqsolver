@@ -154,6 +154,7 @@ export function UsersPanel({ showToast }) {
                 <tr className={`border-b ${t_borderLight}`}>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Name</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Mobile</th>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Telegram ID</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Plan</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Expiry</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Status</th>
@@ -166,6 +167,7 @@ export function UsersPanel({ showToast }) {
                   <tr key={u.id} className={`border-b ${t_borderLight} ${isDark ? "hover:bg-white/[0.02]" : "hover:bg-black/[0.02]"}`}>
                     <td className={`p-3 font-medium ${t_textHeading}`}>{u.full_name || "—"}</td>
                     <td className={`p-3 ${t_textMuted}`}>{u.mobile_number || "—"}</td>
+                    <td className={`p-3 font-mono text-xs ${t_textMuted}`}>{u.telegram_user_id || "—"}</td>
                     <td className={`p-3 ${t_textHeading}`}>
                       {u.plan_name ? (
                         <span>{u.plan_name}<br/><span className={`text-xs ${t_textMuted}`}>{u.usage_used || 0}/{u.plan_monthly_limit || "?"} used</span></span>

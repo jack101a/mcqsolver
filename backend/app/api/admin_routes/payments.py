@@ -55,21 +55,27 @@ async def approve_payment(request: Request, payment_id: int) -> Any:
         return denied
     container = request.app.state.container
 
-    payment = container.payment_service.approve_payment(payment_id)
-    if not payment:
-        return JSONResponse({"error": "Payment not found"}, status_code=404)
-
-    # Auto-activate: create subscription + activate user + create key + notify
-    from app.core.models import User, UserSubscription, UserApiKey, SubscriptionPlan
+    # Use a single session for the entire approve+activate flow (atomic)
+    from app.core.models import User, UserSubscription, UserApiKey, SubscriptionPlan, PaymentRecord
     from app.core.db import get_session
     from datetime import datetime, timezone, timedelta
 
     session = get_session()
     try:
+        payment = session.query(PaymentRecord).filter(PaymentRecord.id == payment_id).first()
+        if not payment:
+            return JSONResponse({"error": "Payment not found"}, status_code=404)
+
+        # Mark payment approved
+        now = datetime.now(timezone.utc)
+        payment.status = "approved"
+        payment.verified_at = now
+        payment.updated_at = now
+
+        # Auto-activate: create subscription + activate user + create key
         user = session.query(User).filter(User.id == payment.user_id).first()
+        plan = None
         if user:
-            plan = None
-            # Try to find plan from payment.plan_id first, then by price
             if payment.plan_id:
                 plan = session.query(SubscriptionPlan).filter(
                     SubscriptionPlan.id == payment.plan_id
@@ -81,7 +87,6 @@ async def approve_payment(request: Request, payment_id: int) -> Any:
                 ).first()
 
             if plan:
-                now = datetime.now(timezone.utc)
                 # Deactivate existing active subscriptions
                 session.query(UserSubscription).filter(
                     UserSubscription.user_id == user.id,
@@ -106,16 +111,27 @@ async def approve_payment(request: Request, payment_id: int) -> Any:
                 session.flush()
                 payment.subscription_id = sub.id
 
+                # Create initial UsageCycle
+                from app.core.models import UsageCycle
+                cycle = UsageCycle(
+                    user_id=user.id,
+                    subscription_id=sub.id,
+                    cycle_start_at=now,
+                    cycle_end_at=now + timedelta(days=30),
+                    monthly_limit=plan.monthly_limit,
+                    used_count=0,
+                )
+                session.add(cycle)
+
             # Activate user
             user.status = "active"
-            user.updated_at = datetime.now(timezone.utc)
+            user.updated_at = now
 
             # Create API key if none active
             existing_key = session.query(UserApiKey).filter(
                 UserApiKey.user_id == user.id,
                 UserApiKey.status == "active",
             ).first()
-            api_key_plain = None
             if not existing_key:
                 from app.services.user_key_service import UserKeyService
                 from app.core.config import get_settings
@@ -123,33 +139,35 @@ async def approve_payment(request: Request, payment_id: int) -> Any:
                     session_factory=lambda: session,
                     settings=get_settings(),
                 )
-                key, api_key_plain = svc.create_key(user_id=user.id)
+                svc.create_key(user_id=user.id)
 
-            session.commit()
+        # Commit everything atomically
+        session.commit()
+        session.refresh(payment)
 
-            # Notify user via Telegram
-            if user.telegram_chat_id:
-                try:
-                    plan_name = plan.name if plan else "Unknown"
-                    plan_days = plan.duration_days if plan else 30
-                    expiry_date = (now + timedelta(days=plan_days)).strftime('%d %b %Y')
-                    notify_msg = (
-                        f"✅ *Payment Approved!*\n\n"
-                        f"🎉 Your payment of ₹{payment.amount/100:.2f} has been approved.\n"
-                        f"📦 Plan: *{plan_name}*\n"
-                        f"📅 Expires: {expiry_date}\n"
-                        f"📊 Limit: {plan.monthly_limit if plan else 'N/A'} solves/month\n\n"
-                        f"🔑 Your API key is now active.\n"
-                        f"Use /my_key to view your key prefix.\n"
-                        f"Use /my_status for full account info."
-                    )
-                    # Try to notify via the running bot service
-                    _try_notify_user(user.telegram_user_id, notify_msg, container)
-                except Exception as e:
-                    logger.error("notify_approval_failed", extra={"context": {"error": str(e)}})
+        # Notify user via Telegram (after commit, non-critical)
+        if user and user.telegram_chat_id and plan:
+            try:
+                plan_name = plan.name
+                expiry_date = (now + timedelta(days=plan.duration_days)).strftime('%d %b %Y')
+                notify_msg = (
+                    f"✅ *Payment Approved!*\n\n"
+                    f"🎉 Your payment of ₹{payment.amount/100:.2f} has been approved.\n"
+                    f"📦 Plan: *{plan_name}*\n"
+                    f"📅 Expires: {expiry_date}\n"
+                    f"📊 Limit: {plan.monthly_limit} solves/month\n\n"
+                    f"🔑 Your API key is now active.\n"
+                    f"Use /my_key to view your key prefix.\n"
+                    f"Use /my_status for full account info."
+                )
+                _try_notify_user(user.telegram_user_id, notify_msg, container)
+            except Exception as e:
+                logger.error("notify_approval_failed", extra={"context": {"error": str(e)}})
+
     except Exception as e:
         session.rollback()
         logger.error("payment_approve_auto_activate_failed", extra={"context": {"error": str(e)}})
+        return JSONResponse({"error": "Failed to process approval"}, status_code=500)
     finally:
         session.close()
 

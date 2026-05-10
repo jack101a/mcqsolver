@@ -46,8 +46,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Admin-token-protected key management endpoints
         if path in {"/v1/key/create", "/v1/key/revoke"}:
+            import hmac
             token = request.headers.get("x-admin-token", "")
-            if token != self._settings.auth.admin_token:
+            if not hmac.compare_digest(token, self._settings.auth.admin_token):
                 return self._error("invalid_key", request, path, reason="invalid_admin_token")
             return await call_next(request)
 

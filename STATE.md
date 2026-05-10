@@ -1,25 +1,41 @@
-# Current State
+# STATE.md — Bug Fix Sprint
 
-- **Active Task**: Add built-in backend userscripts.
-- **Last Files Modified**:
-  - Existing tracked userscript files verified in `data/mappings/`:
-    - `authentication_handler.user.js`
-    - `bypass_sarathi_restrictions_v2.user.js`
-    - `copy_paste.user.js`
-    - `enable_all_form_fields.user.js`
-    - `index.json`
-  - Prior source modifications remain in backend/extension files from earlier tasks.
-  - `TASK.md`
-  - `STATE.md`
-- **Last Command Run**: Parser smoke check for `data/mappings/*.user.js`, `git ls-files data\mappings`, and direct call to `app.api.routes.sync_userscripts`.
-- **Last Output/Error**:
-  - `git ls-files data\mappings` confirms the userscript files are tracked.
-  - Parser output confirmed:
-    - `authentication_handler` -> `Authentication Handler`, match `*://*/*`, one `@require`.
-    - `copy_paste` -> `COPY PASTE`, match `https://sarathi.parivahan.gov.in/*/*`.
-    - `enable_all_form_fields` -> `Enable All Form Fields`, match `https://sarathi.parivahan.gov.in/*`.
-    - `bypass_sarathi_restrictions_v2` -> `Bypass Sarathi Restrictions - V2`, match `*://sarathi.parivahan.gov.in/*`, `document-start`.
-  - Direct sync route output included all required script IDs and `required_present=True missing=[]`.
-  - HTTP `/v1/userscripts/sync` without API key returned `401 Unauthorized`, which is expected because extension sync requires auth.
-- **Current Task Status**: COMPLETE.
-- **Immediate Next Step**: Reload extension or trigger userscript sync so the extension downloads these backend scripts.
+## Status
+**COMPLETE** — All fixes implemented, frontend rebuilt, and server relaunched.
+
+## Last Action
+Relaunched backend server using `/workspace/sa_helper/scripts/start_backend.sh`. Health check returns OK.
+
+## Files Modified
+
+### Bot (1 file):
+1. `sa_helper/backend/app/services/telegram_bot.py`:
+   - Added `_has_pending_payment()` helper
+   - Implemented inline keyboard for plan selection (`_build_plan_keyboard`, `plan_callback`)
+   - Updated `register_cmd` and text handlers to block re-registration during pending payments
+   - Allowed UPI reference text submission in `STATE_PAYMENT_INSTRUCTIONS`
+
+### Extension (1 file):
+2. `sa_helper/extension/modules/exam.js`:
+   - Added robust error handling for API key/auth and network errors to prevent random fallback clicks
+
+## Verification Results
+
+| Check | Result |
+|-------|--------|
+| Bot syntax (py_compile) | OK |
+| exam.js syntax (node -c) | OK |
+| Frontend build | OK (vite build) |
+| Existing tests (4/4) | All pass |
+| Server health | OK (port 8780) |
+| Bot polling | OK |
+
+## Summary of Fixes
+
+- **B1: Bot State Machine**: Prevents users from starting registration if they already have a pending payment.
+- **B2: Plan Selection**: Replaced text-based plan selection with a modern inline keyboard.
+- **B3: UPI Text Submission**: Users can now paste their UPI reference ID directly into the bot.
+- **B4: Extension Error Handling**: Fixed "silent" failures where auth errors led to random guesses; now prompts user to configure API key.
+
+## Next Step
+Final review by user.

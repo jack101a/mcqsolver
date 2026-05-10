@@ -22,7 +22,7 @@ export function PaymentsPanel({ showToast }) {
   const [payments, setPayments] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("pending");
+  const [statusFilter, setStatusFilter] = useState("pending_payment");
   const [pendingCount, setPendingCount] = useState(0);
   const [page, setPage] = useState(0);
   const [rejecting, setRejecting] = useState(null);
@@ -121,6 +121,7 @@ export function PaymentsPanel({ showToast }) {
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>ID</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>User</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>TG ID</th>
+                  <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Plan</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Amount</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>Ref</th>
                   <th className={`text-left p-3 text-xs font-semibold uppercase tracking-wider ${t_textMuted}`}>UPI ID</th>
@@ -137,6 +138,7 @@ export function PaymentsPanel({ showToast }) {
                     <td className={`p-3 font-mono text-xs ${t_textHeading}`}>#{p.id}</td>
                     <td className={`p-3 ${t_textHeading}`}>{p.payer_name || `User #${p.user_id}`}</td>
                     <td className={`p-3 font-mono text-xs ${t_textMuted}`}>{p.telegram_user_id || "—"}</td>
+                    <td className={`p-3 text-xs ${t_textMuted}`}>{p.plan_id ? `#${p.plan_id}` : "—"}</td>
                     <td className={`p-3 font-medium ${t_textHeading}`}>₹{(p.amount / 100).toFixed(2)}</td>
                     <td className={`p-3 font-mono text-xs ${t_textMuted}`}>{p.payment_ref || "—"}</td>
                     <td className={`p-3 font-mono text-xs ${t_textMuted}`}>{p.upi_id_used || "—"}</td>

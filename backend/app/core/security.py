@@ -25,10 +25,17 @@ def hash_api_key(plain_key: str, salt: str) -> str:
 
 
 def compute_expiry(days: int) -> str:
-    """Return UTC ISO expiration timestamp."""
+    """Return UTC ISO expiration timestamp string (for legacy TEXT columns)."""
 
     expires = datetime.now(timezone.utc) + timedelta(days=days)
     return expires.isoformat()
+
+
+def compute_expiry_datetime(days: int) -> datetime | None:
+    """Return UTC expiration as datetime (for SQLAlchemy DateTime columns)."""
+    if days <= 0:
+        return None
+    return datetime.now(timezone.utc) + timedelta(days=days)
 
 
 def is_expired(expires_at: str | None) -> bool:

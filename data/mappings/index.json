@@ -8,7 +8,17 @@
     "matches": [
       "*://*/*"
     ],
-    "runAt": "document-idle"
+    "exclude": [],
+    "runAt": "document-idle",
+    "requires": [
+      "https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js"
+    ],
+    "resources": [],
+    "grants": [
+      "none"
+    ],
+    "connects": [],
+    "noframes": false
   },
   {
     "id": "bypass_sarathi_restrictions_v2",
@@ -19,7 +29,15 @@
     "matches": [
       "*://sarathi.parivahan.gov.in/*"
     ],
-    "runAt": "document-start"
+    "exclude": [],
+    "runAt": "document-start",
+    "requires": [],
+    "resources": [],
+    "grants": [
+      "none"
+    ],
+    "connects": [],
+    "noframes": false
   },
   {
     "id": "copy_paste",
@@ -30,7 +48,15 @@
     "matches": [
       "https://sarathi.parivahan.gov.in/*/*"
     ],
-    "runAt": "document-idle"
+    "exclude": [],
+    "runAt": "document-idle",
+    "requires": [],
+    "resources": [],
+    "grants": [
+      "none"
+    ],
+    "connects": [],
+    "noframes": false
   },
   {
     "id": "enable_all_form_fields",
@@ -41,6 +67,33 @@
     "matches": [
       "https://sarathi.parivahan.gov.in/*"
     ],
-    "runAt": "document-idle"
+    "exclude": [],
+    "runAt": "document-idle",
+    "requires": [],
+    "resources": [],
+    "grants": [
+      "none"
+    ],
+    "connects": [],
+    "noframes": false
+  },
+  {
+    "id": "enable_all_form_fields_for_stall",
+    "file": "enable_all_form_fields_for_stall.user.js",
+    "name": "Enable All Form Fields",
+    "version": "1.0",
+    "enabled": true,
+    "matches": [
+      "https://sarathi.parivahan.gov.in/*"
+    ],
+    "exclude": [],
+    "runAt": "document-idle",
+    "requires": [],
+    "resources": [],
+    "grants": [
+      "none"
+    ],
+    "connects": [],
+    "noframes": false
   }
 ]

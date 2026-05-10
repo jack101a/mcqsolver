@@ -312,8 +312,27 @@
                     await clickOption(optNum);
                     waitAndSubmit(deadline, isLast);
                 } else {
+                    // ── Improved error handling ──────────────────────────
+                    const errMsg = resp?.error || '';
+                    const isTimeout = errMsg === 'TIMEOUT_29S';
+
+                    // Auth / config errors — show clear message, don't interact
+                    if (/no api key|api key invalid|unauthorized|forbidden|blocked|inactive|payment pending/i.test(errMsg)) {
+                        setStatus('⚙️ Setup Needed', 'fail');
+                        setResult('API key not configured or invalid. Open extension popup → enter key.');
+                        state.processing = false;
+                        return;
+                    }
+
+                    // Network errors — skip this question, don't click random
+                    if (/network|fetch|failed to fetch|timeout/i.test(errMsg) && !isTimeout) {
+                        setStatus('🌐 Network Error', 'fail');
+                        setResult('Cannot reach server. Check your connection.');
+                        state.processing = false;
+                        return;
+                    }
+
                     // FALLBACK: Pick random option at the very last second (29s)
-                    const isTimeout = resp?.error === 'TIMEOUT_29S';
                     
                     // If we got "No Match" early, we MUST wait until 29s before clicking random
                     if (!isTimeout) {

@@ -147,7 +147,12 @@ class PaymentService:
     def get_pending_count(self) -> int:
         session = self._session()
         try:
-            return session.query(PaymentRecord).filter(PaymentRecord.status == "pending").count()
+            return session.query(PaymentRecord).filter(
+                PaymentRecord.status.in_([
+                    "pending_payment", "screenshot_submitted", "ready_for_admin_approval",
+                    "ocr_processing", "ocr_matched", "ocr_mismatch"
+                ])
+            ).count()
         finally:
             session.close()
 

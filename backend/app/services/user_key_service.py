@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.models import UserApiKey, UserApiKeyDevice, User
-from app.core.security import generate_plain_api_key, hash_api_key, compute_expiry
+from app.core.security import generate_plain_api_key, hash_api_key, compute_expiry_datetime
 
 
 class UserKeyService:
@@ -44,7 +44,7 @@ class UserKeyService:
             plain = generate_plain_api_key(self._settings)
             key_hash = hash_api_key(plain, self._settings.auth.hash_salt)
             days = expiry_days or self._settings.auth.default_expiry_days
-            expires_at = compute_expiry(days) if days > 0 else None
+            expires_at = compute_expiry_datetime(days)
 
             key = UserApiKey(
                 user_id=user_id,
@@ -53,7 +53,7 @@ class UserKeyService:
                 status="active",
                 key_version=1,
                 issued_at=datetime.now(timezone.utc),
-                expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
+                expires_at=expires_at,
                 created_by_admin_id=created_by_admin_id,
             )
             session.add(key)
@@ -92,7 +92,7 @@ class UserKeyService:
             plain = generate_plain_api_key(self._settings)
             key_hash = hash_api_key(plain, self._settings.auth.hash_salt)
             days = self._settings.auth.default_expiry_days
-            expires_at = compute_expiry(days) if days > 0 else None
+            expires_at = compute_expiry_datetime(days)
 
             key = UserApiKey(
                 user_id=user_id,
@@ -101,7 +101,7 @@ class UserKeyService:
                 status="active",
                 key_version=old_version + 1,
                 issued_at=datetime.now(timezone.utc),
-                expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
+                expires_at=expires_at,
                 rotated_from_key_id=old_id,
                 created_by_admin_id=created_by_admin_id,
             )
@@ -136,7 +136,8 @@ class UserKeyService:
     # ── Validation ────────────────────────────────────────────────────────
 
     def validate_key(self, plain_key: str) -> dict | None:
-        """Validate a user-linked API key. Returns dict with user status info."""
+        """Validate a user-linked API key. Returns dict with user status info.
+        Also updates last_used_at and usage_count."""
         key_hash = hash_api_key(plain_key, self._settings.auth.hash_salt)
         session = self._session()
         try:
@@ -156,6 +157,11 @@ class UserKeyService:
             user = session.query(User).filter(User.id == key.user_id).first()
             if not user or user.status not in ("active",):
                 return None
+
+            # Update usage tracking
+            key.last_used_at = datetime.now(timezone.utc)
+            key.usage_count = (key.usage_count or 0) + 1
+            session.commit()
 
             return {
                 "id": key.id,

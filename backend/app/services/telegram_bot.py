@@ -146,8 +146,36 @@ class TelegramBotService:
                 price = f"₹{p.price_amount / 100:.2f}"
                 msg += f"*{i}.* *{p.name}* — {price}\n"
                 msg += f"   _{p.monthly_limit} solves/mo, {p.duration_days} days_\n\n"
-            msg += "Reply with the plan number (1, 2, 3...)"
+            msg += "_Tap a plan button below to select._"
             return msg
+        finally:
+            session.close()
+
+    def _build_plan_keyboard(self, chat_id: int):
+        """Build an InlineKeyboardMarkup with plan buttons for the given chat."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        session = self._session()
+        try:
+            plans = (
+                session.query(SubscriptionPlan)
+                .filter(SubscriptionPlan.is_active == True)
+                .order_by(SubscriptionPlan.price_amount)
+                .all()
+            )
+            if not plans:
+                return None
+
+            buttons = []
+            for p in plans:
+                price = f"₹{p.price_amount / 100:.2f}"
+                label = f"{p.name} — {price}"
+                buttons.append([InlineKeyboardButton(
+                    label, callback_data=f"plan_{p.id}"
+                )])
+
+            # Store plan IDs in state for the callback handler
+            self.set_state(chat_id, STATE_PLAN_SELECT, {"plans": [p.id for p in plans]})
+            return InlineKeyboardMarkup(buttons)
         finally:
             session.close()
 
@@ -155,7 +183,8 @@ class TelegramBotService:
         self.set_state(chat_id, STATE_MOBILE, {"full_name": name})
         return f"Thanks, *{name}*! Now share your mobile number (e.g., `+919876543210`)."
 
-    def handle_mobile(self, chat_id: int, mobile: str) -> str:
+    def handle_mobile(self, chat_id: int, mobile: str) -> dict:
+        """Returns {"text": ..., "inline_keyboard": InlineKeyboardMarkup|None}."""
         mobile = mobile.strip().replace(" ", "")
         self.set_state(chat_id, STATE_PLAN_SELECT, {"mobile_number": mobile})
 
@@ -168,10 +197,13 @@ class TelegramBotService:
                 .all()
             )
             if not plans:
-                return "No plans available. Please contact admin."
+                return {"text": "No plans available. Please contact admin.", "inline_keyboard": None}
 
             self.set_state(chat_id, STATE_PLAN_SELECT, {"plans": [p.id for p in plans]})
-            return self._get_plans_message()
+            return {
+                "text": self._get_plans_message(),
+                "inline_keyboard": self._build_plan_keyboard(chat_id),
+            }
         finally:
             session.close()
 
@@ -487,6 +519,42 @@ class TelegramBotService:
         finally:
             session.close()
 
+    def _has_pending_payment(self, telegram_user_id: str) -> dict | None:
+        """Check if user has a payment that's awaiting admin action.
+        Returns the latest pending payment dict, or None if none found.
+        """
+        session = self._session()
+        try:
+            user = session.query(User).filter(
+                User.telegram_user_id == str(telegram_user_id)
+            ).first()
+            if not user:
+                return None
+            payment = (
+                session.query(PaymentRecord)
+                .filter(
+                    PaymentRecord.user_id == user.id,
+                    PaymentRecord.status.in_([
+                        "pending_payment", "screenshot_submitted",
+                        "ready_for_admin_approval",
+                    ]),
+                )
+                .order_by(PaymentRecord.created_at.desc())
+                .first()
+            )
+            if payment:
+                return {
+                    "id": payment.id,
+                    "status": payment.status,
+                    "amount": payment.amount,
+                    "payment_ref": payment.payment_ref,
+                    "plan_id": payment.plan_id,
+                    "created_at": payment.created_at,
+                }
+            return None
+        finally:
+            session.close()
+
     def handle_payment_status(self, telegram_user_id: str) -> str:
         session = self._session()
         try:
@@ -572,7 +640,7 @@ class TelegramBotService:
         """Start the bot using long-polling."""
         try:
             from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-            from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+            from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
             app = Application.builder().token(self._token).build()
 
@@ -622,6 +690,25 @@ class TelegramBotService:
                 uid = str(update.effective_user.id)
                 chat_id = update.effective_chat.id
 
+                # Check if user has a pending payment — block re-registration
+                pending = self._has_pending_payment(uid)
+                if pending:
+                    status_labels = {
+                        "pending_payment": "Awaiting payment",
+                        "screenshot_submitted": "Screenshot submitted",
+                        "ready_for_admin_approval": "Under admin review",
+                    }
+                    label = status_labels.get(pending["status"], pending["status"])
+                    await update.message.reply_text(
+                        f"⏳ *Payment Already in Progress*\n\n"
+                        f"• Ref: `{pending['payment_ref'] or 'N/A'}`\n"
+                        f"• Amount: ₹{pending['amount'] / 100:.2f}\n"
+                        f"• Status: *{label}*\n\n"
+                        f"_Please wait for admin approval. No need to register again._\n\n"
+                        f"Use /payment_status to check updates.",
+                        parse_mode="Markdown", reply_markup=_main_keyboard())
+                    return
+
                 # Check if user already exists — single account per TG user
                 session = self._session()
                 try:
@@ -641,7 +728,11 @@ class TelegramBotService:
                             ) + self._get_plans_message()
                         else:
                             msg = self._get_plans_message()
-                        await update.message.reply_text(msg, parse_mode="Markdown")
+                        keyboard = self._build_plan_keyboard(chat_id)
+                        kwargs = {"parse_mode": "Markdown"}
+                        if keyboard:
+                            kwargs["reply_markup"] = keyboard
+                        await update.message.reply_text(msg, **kwargs)
                         return
                 finally:
                     session.close()
@@ -660,6 +751,24 @@ class TelegramBotService:
 
                 # ── Handle keyboard button presses ──────────────────────────
                 if text == "📝 Register":
+                    # Check for pending payment first
+                    pending = self._has_pending_payment(uid)
+                    if pending:
+                        status_labels = {
+                            "pending_payment": "Awaiting payment",
+                            "screenshot_submitted": "Screenshot submitted",
+                            "ready_for_admin_approval": "Under admin review",
+                        }
+                        label = status_labels.get(pending["status"], pending["status"])
+                        await update.message.reply_text(
+                            f"⏳ *Payment Already in Progress*\n\n"
+                            f"• Ref: `{pending['payment_ref'] or 'N/A'}`\n"
+                            f"• Amount: ₹{pending['amount'] / 100:.2f}\n"
+                            f"• Status: *{label}*\n\n"
+                            f"_Please wait for admin approval._\n"
+                            f"Use /payment_status to check updates.",
+                            parse_mode="Markdown", reply_markup=_main_keyboard())
+                        return
                     self.set_state(chat_id, STATE_NAME)
                     await update.message.reply_text(
                         "Let's register! What's your full name?", parse_mode="Markdown")
@@ -703,19 +812,27 @@ class TelegramBotService:
                     if state["state"] == STATE_NAME:
                         reply = self.handle_name(chat_id, text)
                     elif state["state"] == STATE_MOBILE:
-                        reply = self.handle_mobile(chat_id, text)
+                        result = self.handle_mobile(chat_id, text)
+                        reply = result["text"]
+                        inline_keyboard = result.get("inline_keyboard")
                     elif state["state"] == STATE_PLAN_SELECT:
                         result = self.handle_plan_select(chat_id, text)
                         reply = result["text"]
                         qr_bytes = result.get("qr_bytes")
                         inline_keyboard = result.get("inline_keyboard")
                     elif state["state"] == STATE_PAYMENT_INSTRUCTIONS:
-                        # User sent text instead of screenshot — prompt them to send screenshot
-                        reply = (
-                            "📸 *Please send a screenshot* of your payment confirmation.\n\n"
-                            "The screenshot should clearly show the transaction/reference ID.\n\n"
-                            "_Tap the 📎 attachment button to send a photo._"
-                        )
+                        # User sent text — check if it looks like a UPI reference
+                        import re as _re
+                        upi_ref_match = _re.match(r'^[A-Za-z0-9]{8,30}$', text.strip())
+                        if upi_ref_match:
+                            reply = self.handle_payment_submit(chat_id, text.strip(), uid)
+                        else:
+                            reply = (
+                                "📸 *Please send a screenshot* of your payment confirmation.\n\n"
+                                "The screenshot should clearly show the transaction/reference ID.\n\n"
+                                "_Tap the 📎 attachment button to send a photo._\n\n"
+                                "_Or paste your UPI transaction reference ID as text._"
+                            )
                     else:
                         reply = "Use /register to start or /help for commands."
                 except Exception as e:
@@ -753,6 +870,96 @@ class TelegramBotService:
                     parse_mode="Markdown",
                     reply_markup=_main_keyboard()
                 )
+
+            async def plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                """Handle inline keyboard plan selection callbacks."""
+                query = update.callback_query
+                await query.answer()
+                chat_id = update.effective_chat.id
+
+                data = query.data
+                if not data or not data.startswith("plan_"):
+                    return
+
+                try:
+                    plan_id = int(data.split("_", 1)[1])
+                except (ValueError, IndexError):
+                    await query.edit_message_text("Invalid plan selection. Use /register to try again.")
+                    return
+
+                # Check if user has a pending payment
+                uid = str(update.effective_user.id)
+                pending = self._has_pending_payment(uid)
+                if pending:
+                    await query.edit_message_text(
+                        "⏳ *Payment Already in Progress*\n\n"
+                        f"Your payment is already being processed. Use /payment_status to check.",
+                        parse_mode="Markdown")
+                    return
+
+                # Process plan selection
+                result = self.handle_plan_select(chat_id, str(plan_id + 1))  # Convert back to 1-based for compatibility
+                # Actually, handle_plan_select expects a 1-based index. Let's fix this.
+                # We need to look up the plan by ID directly.
+
+                session = self._session()
+                try:
+                    plan = session.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()
+                    if not plan:
+                        await query.edit_message_text("Plan not found. Please try again.")
+                        return
+
+                    price = plan.price_amount / 100
+                    price_str = f"₹{price:.2f}"
+                    upi = self._upi_id or "Not configured — contact admin"
+
+                    note_prefix = self._read_db_setting("payment.note_prefix") or self._payment_note_prefix
+                    ref = f"{note_prefix}{datetime.now(timezone.utc).strftime('%y%m%d')}{uuid.uuid4().hex[:6].upper()}"
+
+                    self.set_state(chat_id, STATE_PAYMENT_INSTRUCTIONS, {
+                        "plan_id": plan_id,
+                        "plan_name": plan.name,
+                        "price_amount": plan.price_amount,
+                        "payment_ref": ref,
+                        "upi_id": upi,
+                        "payee_name": self._payee_name,
+                    })
+
+                    upi_link = _make_upi_link(upi, self._payee_name, price, ref)
+
+                    msg = (
+                        f"*Plan:* {plan.name}\n"
+                        f"*Amount:* {price_str}\n"
+                        f"*Validity:* {plan.duration_days} days\n"
+                        f"*Ref:* `{ref}`\n\n"
+                        f"_Click below to pay using UPI._\n\n"
+                        f"📋 *Fallback UPI Details:*\n"
+                        f"• UPI ID: `{upi}`\n"
+                        f"• Amount: {price_str}\n"
+                        f"• Note: `{ref}`\n\n"
+                        f"_After payment, send a *screenshot* of your payment confirmation._"
+                    )
+
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    pay_keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📲 Tap to Pay", url=upi_link)],
+                    ])
+
+                    # Edit the plan selection message to show payment instructions
+                    await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=pay_keyboard)
+
+                    # Send QR code
+                    qr_buf = _generate_qr_bytes(upi_link)
+                    try:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=qr_buf,
+                            caption="📱 Scan this QR to pay via any UPI app"
+                        )
+                    except Exception as e:
+                        logger.error("qr_photo_failed", extra={"context": {"error": str(e)}})
+                finally:
+                    session.close()
 
             async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """Handle payment screenshot uploads."""
@@ -801,35 +1008,58 @@ class TelegramBotService:
                 else:
                     new_status = "screenshot_submitted"
 
-                # Save to DB
+                # Save to DB — look up existing payment by ref, or create new
                 session = self._session()
                 try:
                     user = session.query(User).filter(
                         User.telegram_user_id == uid
                     ).first()
                     if user:
-                        payment = PaymentRecord(
-                            user_id=user.id,
-                            plan_id=state["data"].get("plan_id"),
-                            telegram_user_id=uid,
-                            payment_method="upi",
-                            amount=state["data"].get("price_amount", 0),
-                            payment_ref=expected_ref,
-                            upi_id_used=state["data"].get("upi_id", self._upi_id),
-                            payee_name_used=state["data"].get("payee_name", self._payee_name),
-                            upi_reference=extracted_ref or "screenshot_submitted",
-                            payer_name=state["data"].get("full_name", user.full_name),
-                            payment_screenshot_path=str(filepath),
-                            ocr_matched=ocr_matched,
-                            ocr_extracted_ref=extracted_ref,
-                            ocr_extracted_amount=ocr_data.get("amount"),
-                            ocr_extracted_date=ocr_data.get("date"),
-                            ocr_extracted_payer=ocr_data.get("payer"),
-                            status=new_status,
-                            submitted_at=datetime.now(timezone.utc),
-                        )
-                        session.add(payment)
-                        session.commit()
+                        # Try to find existing payment record by payment_ref
+                        existing_payment = None
+                        if expected_ref:
+                            existing_payment = session.query(PaymentRecord).filter(
+                                PaymentRecord.payment_ref == expected_ref,
+                                PaymentRecord.user_id == user.id,
+                            ).first()
+
+                        if existing_payment:
+                            # Update existing payment with screenshot + OCR data
+                            existing_payment.payment_screenshot_path = str(filepath)
+                            existing_payment.ocr_matched = ocr_matched
+                            existing_payment.ocr_extracted_ref = extracted_ref
+                            existing_payment.ocr_extracted_amount = ocr_data.get("amount")
+                            existing_payment.ocr_extracted_date = ocr_data.get("date")
+                            existing_payment.ocr_extracted_payer = ocr_data.get("payer")
+                            existing_payment.upi_reference = extracted_ref or existing_payment.upi_reference
+                            existing_payment.status = new_status
+                            existing_payment.updated_at = datetime.now(timezone.utc)
+                            session.commit()
+                            payment = existing_payment
+                        else:
+                            # No existing payment — create new record
+                            payment = PaymentRecord(
+                                user_id=user.id,
+                                plan_id=state["data"].get("plan_id"),
+                                telegram_user_id=uid,
+                                payment_method="upi",
+                                amount=state["data"].get("price_amount", 0),
+                                payment_ref=expected_ref,
+                                upi_id_used=state["data"].get("upi_id", self._upi_id),
+                                payee_name_used=state["data"].get("payee_name", self._payee_name),
+                                upi_reference=extracted_ref or "screenshot_submitted",
+                                payer_name=state["data"].get("full_name", user.full_name),
+                                payment_screenshot_path=str(filepath),
+                                ocr_matched=ocr_matched,
+                                ocr_extracted_ref=extracted_ref,
+                                ocr_extracted_amount=ocr_data.get("amount"),
+                                ocr_extracted_date=ocr_data.get("date"),
+                                ocr_extracted_payer=ocr_data.get("payer"),
+                                status=new_status,
+                                submitted_at=datetime.now(timezone.utc),
+                            )
+                            session.add(payment)
+                            session.commit()
 
                         ref = expected_ref or "N/A"
                         if ocr_matched:
@@ -909,11 +1139,13 @@ class TelegramBotService:
             app.add_handler(CommandHandler("regenerate_key", regenerate_cmd))
             app.add_handler(CommandHandler("payment_status", payment_cmd))
             app.add_handler(CommandHandler("help", help_cmd))
+            app.add_handler(CallbackQueryHandler(plan_callback, pattern="^plan_"))
             app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
             app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
             logger.info("telegram_bot_starting")
-            app.run_polling()
+            # stop_signals=None required when running in background thread
+            app.run_polling(stop_signals=None)
         except ImportError:
             logger.error("python-telegram-bot not installed — Telegram bot disabled")
         except Exception as e:

@@ -1,30 +1,21 @@
-# TASK.md - Diagnose STALL Solver CR/Solver Path
+# TASK.md — B1: Fix Bot State Machine — Prevent Re-entering Payment Flow
 
-## Status: IN PROGRESS
+## Goal
+When a user has already submitted a payment (screenshot submitted, pending approval), pressing "Register" again should NOT re-enter the plan selection → payment flow. Instead, it should show current payment status and block re-registration.
 
-Goal: Find why STALL solver is not working in the captcha/CR-related solver path, not Step 3/4 payload loading.
+## Scope
+- Modify `register_cmd` handler to check for existing pending payments
+- Modify `text_handler` for "📝 Register" button to also check
+- Show clear message: "Payment already submitted — awaiting admin approval"
 
-Scope included:
-- Inspect extension captcha solver flow used on STALL/Sarathi pages.
-- Inspect CR/captcha route sync and selector mapping data.
-- Inspect backend `/v1/solve`, `/v1/field-mappings/routes`, `/v1/locators`, and recent backend logs.
-- Identify whether the issue is route/selector mismatch, API key/domain access, backend model failure, or extension message wiring.
-- Apply minimal fix if exact cause is found.
-- Update `STATE.md`.
+## Files
+- `sa_helper/backend/app/services/telegram_bot.py`
 
-Scope excluded:
-- Step 3/4 automation payload debugging.
-- Broad STALL automation refactor.
+## Steps
+1. Add helper method `_has_pending_payment(user_id)` to check for pending payments
+2. In `register_cmd` and text_handler "📝 Register" button: if user has pending payment, show status message and return early
+3. Verify syntax
 
-Plan:
-- [x] Read `AGENTS.md`, `STATE.md`, and current `TASK.md`.
-- [ ] Inspect captcha/CR extension modules and route sync.
-- [ ] Inspect backend DB data for Sarathi routes/locators/access.
-- [ ] Check recent `/v1/solve` and sync logs.
-- [ ] Patch minimal mismatch if found.
-- [ ] Verify.
-- [ ] Update `STATE.md`.
-
-Verification:
-- [ ] Backend health and relevant sync endpoints are OK.
-- [ ] JS/Python syntax checks pass for touched files.
+## Verification
+- Python syntax check on telegram_bot.py
+- Review state machine logic
