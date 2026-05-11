@@ -1,13 +1,13 @@
 # STATE.md - Docker image plug-and-play packaging
 
 ## Status
-**READY TO PUSH** - Docker packaging has been updated so the GHCR image contains runtime dependencies and bundled data assets.
+**COMPLETE** - Docker packaging has been pushed to `sa_helper/before-scale`.
 
 ## Active Task
 Make the SA Helper Docker image self-contained and publish the updated branch to `sa_helper/before-scale`.
 
 ## Last Action
-Updated Docker packaging to include bundled data seed assets, Hindi/English Tesseract packages, entrypoint volume seeding, GHCR compose usage, and `before-scale` image publishing workflow. Docker is not installed locally, so verification used Python/YAML/static checks instead of a local Docker build.
+Committed Docker packaging changes and pushed current HEAD to `sa_helper/before-scale`. Docker is not installed locally, so verification used Python/YAML/static checks instead of a local Docker build; GitHub Actions should perform the real multi-arch Docker build/publish from the pushed branch.
 
 ## Last Files Modified
 - `.gitattributes`
@@ -28,6 +28,10 @@ Updated Docker packaging to include bundled data seed assets, Hindi/English Tess
 - `docker --version`
 - `docker compose -f docker-compose.yml config`
 - `docker compose -f infra\docker-compose.yml config`
+- `git commit -m "feat: make docker image plug and play"`
+- `git push sa_helper HEAD:before-scale`
+- `git commit -m "docs: record docker packaging push"`
+- `git push sa_helper HEAD:before-scale`
 
 ## Last Output/Error
 - Python compile passed.
@@ -44,9 +48,11 @@ Updated Docker packaging to include bundled data seed assets, Hindi/English Tess
   - `backend/app/data/automation_scripts/step4.js`
 - Settings check loaded `queue.workers=4` and `exam.ocr_concurrency=2`.
 - Docker verification could not run locally because `docker` is not installed in this Windows environment.
+- Git push succeeded to `sa_helper/before-scale`.
+- Local-only runtime files remain uncommitted: `backend/logs/app.db*` and `data/questions/questions_learned.json`.
 
 ## Immediate Next Step
-Commit the packaging changes and push the current HEAD to `sa_helper` branch `before-scale`, letting GitHub Actions perform the real multi-arch Docker build/publish.
+Watch the GitHub Actions Docker workflow on `before-scale` to confirm the GHCR multi-arch image publishes successfully.
 
 ## Task Status
-In progress: push pending.
+Complete.

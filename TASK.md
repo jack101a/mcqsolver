@@ -20,8 +20,8 @@ Make the SA Helper Docker image self-contained so users can run it without insta
 1. [done] Read current Dockerfiles, compose files, workflow, and runtime asset paths.
 2. [done] Patch Dockerfile/compose/workflow for bundled assets and plug-and-play runtime.
 3. [done] Verify syntax/config and Docker build health where possible.
-4. [in-progress] Update STATE.md.
-5. [pending] Commit and push to `sa_helper` `before-scale`.
+4. [done] Update STATE.md.
+5. [done] Commit and push to `sa_helper` `before-scale`.
 
 ## Verification
 - Run backend py_compile for touched Python if any.
@@ -31,3 +31,5 @@ Make the SA Helper Docker image self-contained so users can run it without insta
 
 ## Result
 Docker image now seeds bundled `/app/data` assets from `/opt/sa-helper-seed`, includes Hindi/English Tesseract packages and traineddata, and exposes `/health` for container health checks. Compose files use the GHCR image with named volumes for logs/config/data so users do not have to install or mount ONNX, question JSON, sign hashes, userscript mappings, or tessdata manually. Local Docker is not installed in this environment, so Docker build/compose execution must be verified by GitHub Actions.
+
+Committed and pushed to `sa_helper/before-scale`.
