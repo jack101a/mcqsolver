@@ -1,10 +1,10 @@
 # STATE.md - MCQ Stability And Deployment Plan
 
 ## Status
-PLANNED
+CHECKPOINT_PUSHED
 
 ## Active Task
-Analyzed requested bug/improvement list and produced a phased implementation plan.
+Analyzed requested bug/improvement list, added protected STALL payload requirements, and pushed a safety checkpoint before implementation changes.
 
 ## Last Files Modified
 - `TASK.md`
@@ -12,10 +12,10 @@ Analyzed requested bug/improvement list and produced a phased implementation pla
 - `tmp/mcq_stability_scaling_plan.md`
 
 ## Last Command Run
-Targeted code inspection across MCQ learning, captcha, vcam, STALL, Docker, Telegram, API keys, and backup modules.
+`git push sa_helper before-scale`
 
 ## Last Output/Error
-Plan saved to `tmp/mcq_stability_scaling_plan.md`.
+`792c036..74312d5  before-scale -> before-scale`
 
 ## Key Findings
 - Learned pHash is unsafe because confidence/confirmation gates are too low and pHash distance is too broad.
@@ -28,4 +28,4 @@ Plan saved to `tmp/mcq_stability_scaling_plan.md`.
 - Extension logout/API-key removal should wipe server-synced data and cached payloads.
 
 ## Immediate Next Step
-Commit and push the current source/plan state to `sa_helper/before-scale` before implementation changes.
+Implement Phase 1: learned-answer safety and trainer-only mode.

@@ -4,7 +4,7 @@
 Analyze the reported MCQ learning, extension performance, STALL, Telegram, Docker, API key, DB, backup, and scaling issues; produce an implementation plan before coding.
 
 ## Status
-PLANNED
+CHECKPOINT_PUSHED
 
 ## Scope Included
 - Learned pHash safety and trainer-only mode.
@@ -38,7 +38,7 @@ PLANNED
 - `tmp/mcq_stability_scaling_plan.md`
 
 ## Immediate Next Step
-Commit and push the current source/plan state to `sa_helper/before-scale`, excluding local DB/log artifacts and generated extension packages.
+Implement Phase 1: learned-answer safety and trainer-only mode.
 
 ## Verification Approach
 - Unit/smoke tests for learned lookup thresholds.
