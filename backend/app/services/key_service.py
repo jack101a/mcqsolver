@@ -45,7 +45,7 @@ class KeyService:
         record = self._db.get_api_key_by_hash(key_hash=key_hash)
         if not record:
             return None
-        if int(record.get("enabled", 0)) != 1:
+        if int(record.get("enabled") or 0) != 1:
             return None
         if is_expired(record.get("expires_at")):
             return None

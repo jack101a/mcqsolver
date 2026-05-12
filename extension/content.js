@@ -9,7 +9,7 @@
 
     // ESC fallback (close modals/alerts on some sites)
     if (location.hostname.includes('sarathi.parivahan.gov.in')) {
-        setInterval(function(){
+        var _escInterval = setInterval(function(){
           try {
             document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
           } catch(e) {}

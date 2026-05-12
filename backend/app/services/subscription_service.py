@@ -125,10 +125,11 @@ class SubscriptionService:
             )
             session.add(sub)
 
-            # Activate the user
+            # Activate the user (unless blocked)
             user = session.query(User).filter(User.id == user_id).first()
             if user:
-                user.status = "active"
+                if user.status != "blocked":
+                    user.status = "active"
                 user.updated_at = now
 
             session.commit()

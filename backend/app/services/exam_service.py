@@ -161,6 +161,7 @@ class ExamService:
         self._data_dir = data_dir
         self._http     = httpx.AsyncClient(timeout=30.0)
         self._ocr_semaphore = threading.BoundedSemaphore(self._ocr_concurrency())
+        self._sign_lock = threading.Lock()
 
         # Load static data files (these don't change at runtime)
         q_path = data_dir / "questions" / "questions.json"
@@ -210,7 +211,11 @@ class ExamService:
                 self._sign_phash = json.load(f)
             logger.info("sign_phash_loaded", extra={"context": {"count": len(self._sign_phash)}})
 
+        # Reusable thread pool for OCR (created once, not per request)
+        self._ocr_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
     async def close(self) -> None:
+        self._ocr_pool.shutdown(wait=False)
         await self._http.aclose()
 
     def export_learned_to_json(self) -> int:
@@ -264,26 +269,27 @@ class ExamService:
     # ── Layer 1: Perceptual Hash ──────────────────────────────────────────────
 
     def _match_sign_hash(self, img: Image.Image) -> str | None:
-        # 1. Try exact DJB2 match first (fast, no false positives)
-        djb2 = _djb2_hash(img)
-        if djb2 in self._sign_hashes:
-            label = self._sign_hashes[djb2]
-            # Auto-learn: store pHash for future fuzzy matching
-            phash = _phash(img)
-            if phash not in self._sign_phash:
-                self._sign_phash[phash] = label
-                self._save_phash_file()
-            return label
-        
-        # 2. Try perceptual hash with Hamming distance (fuzzy, robust to compression/resize)
-        if self._sign_phash:
-            phash = _phash(img)
-            label = _phash_hamming_match(phash, self._sign_phash, threshold=self.HASH_THRESHOLD)
-            if label:
-                logger.info("phash_match", extra={"context": {"label": label, "djb2": djb2[:12]}})
+        with self._sign_lock:
+            # 1. Try exact DJB2 match first (fast, no false positives)
+            djb2 = _djb2_hash(img)
+            if djb2 in self._sign_hashes:
+                label = self._sign_hashes[djb2]
+                # Auto-learn: store pHash for future fuzzy matching
+                phash = _phash(img)
+                if phash not in self._sign_phash:
+                    self._sign_phash[phash] = label
+                    self._save_phash_file()
                 return label
-        
-        return None
+
+            # 2. Try perceptual hash with Hamming distance (fuzzy, robust to compression/resize)
+            if self._sign_phash:
+                phash = _phash(img)
+                label = _phash_hamming_match(phash, self._sign_phash, threshold=self.HASH_THRESHOLD)
+                if label:
+                    logger.info("phash_match", extra={"context": {"label": label, "djb2": djb2[:12]}})
+                    return label
+
+            return None
 
     def _save_phash_file(self) -> None:
         """Persist perceptual hashes to disk."""
@@ -496,7 +502,7 @@ class ExamService:
                 json={
                     "model": self._litellm_model(),
                     "messages": [{"role": "user", "content": content}],
-                    "max_tokens": 5,
+                    "max_tokens": 10,
                 },
             )
             resp.raise_for_status()
@@ -570,30 +576,29 @@ class ExamService:
 
         # Layer 2 — OCR + DB (question text / option text / Hindi fuzzy)
         # We run OCR for question and 4 options in parallel to save time
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            # 1. Start question OCR
-            q_future = executor.submit(self._ocr_text, q_img)
-            
-            # 2. Start option OCRs
-            opt_futures = []
-            for opt_b64 in option_b64s:
+        # Use the persistent thread pool instead of creating a new one per request
+        q_future = self._ocr_pool.submit(self._ocr_text, q_img)
+
+        # 2. Start option OCRs
+        opt_futures = []
+        for opt_b64 in option_b64s:
+            try:
+                opt_img = _b64_to_pil(opt_b64)
+                opt_futures.append(self._ocr_pool.submit(self._ocr_text, opt_img))
+            except Exception:
+                opt_futures.append(None)
+        
+        # 3. Collect results
+        question_text = q_future.result()
+        option_texts  = []
+        for fut in opt_futures:
+            if fut:
                 try:
-                    opt_img = _b64_to_pil(opt_b64)
-                    opt_futures.append(executor.submit(self._ocr_text, opt_img))
+                    option_texts.append(fut.result())
                 except Exception:
-                    opt_futures.append(None)
-            
-            # 3. Collect results
-            question_text = q_future.result()
-            option_texts  = []
-            for fut in opt_futures:
-                if fut:
-                    try:
-                        option_texts.append(fut.result())
-                    except Exception:
-                        option_texts.append("")
-                else:
                     option_texts.append("")
+            else:
+                option_texts.append("")
 
         match = self._db_lookup(question_text, option_texts)
         if match and match.get("correct_option_number"):  # ← correct key name

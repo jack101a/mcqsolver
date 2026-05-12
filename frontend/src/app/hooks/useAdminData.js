@@ -35,7 +35,7 @@ export function useAdminData(showToast) {
     staleTime: 30_000,
   });
 
-  const loading = bootstrap.isLoading;
+  const loading = bootstrap.isLoading || autofill.isLoading || captcha.isLoading || exam.isLoading || userscriptsQuery.isLoading;
   const error = bootstrap.error;
 
   if (error) {

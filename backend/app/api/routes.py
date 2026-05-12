@@ -583,6 +583,7 @@ async def usage(request: Request) -> dict:
 
 @router.post("/key/create", response_model=KeyCreateResponse)
 async def create_key(request: Request, payload: KeyCreateRequest) -> KeyCreateResponse:
+    _ensure_master_key(request)
     container = request.app.state.container
     _key_id, plain, expires_at = container.key_service.create_key(
         name=payload.name,
@@ -593,6 +594,7 @@ async def create_key(request: Request, payload: KeyCreateRequest) -> KeyCreateRe
 
 @router.post("/key/revoke")
 async def revoke_key(request: Request, payload: KeyRevokeRequest) -> dict:
+    _ensure_master_key(request)
     container = request.app.state.container
     if not container.key_service.revoke_key(payload.api_key):
         raise HTTPException(404, "key not found")

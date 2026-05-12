@@ -7,7 +7,9 @@ Run as a separate process: python -m app.services.telegram_bot
 from __future__ import annotations
 
 import io
+import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,21 +78,53 @@ class TelegramBotService:
         self._payment_note_prefix = payment_note_prefix
         self._currency = "INR"
 
+        # Persist user states to survive bot restarts
+        import os as _os
+        _data_dir = Path(__file__).resolve().parents[3] / "data"
+        _data_dir.mkdir(parents=True, exist_ok=True)
+        self._state_file = _data_dir / "telegram_user_states.json"
+        self._load_states()
+
     def _session(self):
         return self._session_factory()
 
     # ── State Management ──────────────────────────────────────────────────
 
+    def _load_states(self):
+        """Restore user states from disk on bot restart."""
+        try:
+            if self._state_file.exists():
+                with self._state_file.open("r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                # Convert string keys back to int, filter stale states (>30 min old)
+                now = time.time()
+                for k, v in raw.items():
+                    if isinstance(v, dict) and v.get("_ts", 0) > now - 1800:
+                        self._user_states[int(k)] = v
+                logger.info("telegram_states_loaded", extra={"context": {"count": len(self._user_states)}})
+        except Exception as e:
+            logger.warning("telegram_states_load_failed", extra={"context": {"error": str(e)}})
+
+    def _save_states(self):
+        """Persist user states to disk."""
+        try:
+            with self._state_file.open("w", encoding="utf-8") as f:
+                json.dump(self._user_states, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning("telegram_states_save_failed", extra={"context": {"error": str(e)}})
+
     def get_state(self, chat_id: int) -> dict:
         if chat_id not in self._user_states:
-            self._user_states[chat_id] = {"state": STATE_START, "data": {}}
+            self._user_states[chat_id] = {"state": STATE_START, "data": {}, "_ts": time.time()}
         return self._user_states[chat_id]
 
     def set_state(self, chat_id: int, state: str, data: dict | None = None):
         current = self.get_state(chat_id)
         current["state"] = state
+        current["_ts"] = time.time()
         if data:
             current["data"].update(data)
+        self._save_states()
 
     # ── Command Handlers ──────────────────────────────────────────────────
 
@@ -986,7 +1020,8 @@ class TelegramBotService:
                 await file.download_to_drive(str(filepath))
 
                 # Try OCR to extract reference ID, amount, date, payer
-                ocr_data = self._ocr_screenshot_full(filepath)
+                import asyncio as _asyncio
+                ocr_data = await _asyncio.to_thread(self._ocr_screenshot_full, filepath)
 
                 # Compare extracted ref with expected payment_ref
                 expected_ref = state["data"].get("payment_ref", "")

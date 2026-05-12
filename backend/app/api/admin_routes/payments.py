@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -160,7 +161,7 @@ async def approve_payment(request: Request, payment_id: int) -> Any:
                     f"Use /my_key to view your key prefix.\n"
                     f"Use /my_status for full account info."
                 )
-                _try_notify_user(user.telegram_user_id, notify_msg, container)
+                await _try_notify_user(user.telegram_user_id, notify_msg, container)
             except Exception as e:
                 logger.error("notify_approval_failed", extra={"context": {"error": str(e)}})
 
@@ -194,7 +195,7 @@ async def reject_payment(request: Request, payment_id: int) -> Any:
     container.audit_service.log(
         actor_type="admin", action="payment_rejected",
         target_type="payment", target_id=payment_id,
-        after_json=f'{{"reason": "{reason}"}}',
+        after_json=json.dumps({"reason": reason}),
     )
 
     # Notify user
@@ -211,7 +212,7 @@ async def reject_payment(request: Request, payment_id: int) -> Any:
             if reason:
                 notify_msg += f"Reason: _{reason}_\n\n"
             notify_msg += "Please contact support or try again with /register"
-            _try_notify_user(user.telegram_user_id, notify_msg, container)
+            await _try_notify_user(user.telegram_user_id, notify_msg, container)
     except Exception:
         pass
     finally:
@@ -224,8 +225,11 @@ async def reject_payment(request: Request, payment_id: int) -> Any:
 
 from pathlib import Path
 
+# Configured base directory for payment screenshots
+_SCREENSHOTS_DIR = Path(__file__).resolve().parents[3] / "data" / "payment_screenshots"
 
-def _try_notify_user(telegram_user_id: str, message: str, container) -> bool:
+
+async def _try_notify_user(telegram_user_id: str, message: str, container) -> bool:
     """Try to send a Telegram notification to a user. Falls back gracefully."""
     try:
         import os
@@ -254,14 +258,13 @@ def _try_notify_user(telegram_user_id: str, message: str, container) -> bool:
         if not user or not user.telegram_chat_id:
             return False
 
-        import asyncio
         from telegram import Bot
         bot = Bot(token=token)
-        asyncio.run(bot.send_message(
+        await bot.send_message(
             chat_id=int(user.telegram_chat_id),
             text=message,
             parse_mode="Markdown",
-        ))
+        )
         return True
     except Exception:
         return False
@@ -280,7 +283,10 @@ async def get_payment_screenshot(request: Request, payment_id: int) -> Any:
         payment = session.query(PaymentRecord).filter(PaymentRecord.id == payment_id).first()
         if not payment or not payment.payment_screenshot_path:
             return JSONResponse({"error": "No screenshot"}, status_code=404)
-        path = Path(payment.payment_screenshot_path)
+        path = Path(payment.payment_screenshot_path).resolve()
+        # Prevent path traversal: ensure the resolved path is within the screenshots directory
+        if _SCREENSHOTS_DIR.resolve() not in path.parents and path != _SCREENSHOTS_DIR.resolve():
+            return JSONResponse({"error": "Invalid screenshot path"}, status_code=403)
         if not path.exists():
             return JSONResponse({"error": "Screenshot file not found"}, status_code=404)
         return FileResponse(str(path), media_type="image/jpeg")

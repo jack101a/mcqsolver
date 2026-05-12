@@ -4,6 +4,7 @@
 
     window.CaptchaModule = (() => {
         let _active = false;
+        let _tickInterval = null;
         const _solvedMap = new Map(); // src → b64 prefix, per-captcha dedup
         const _SOLVED_MAP_LIMIT = 1000;
 
@@ -225,10 +226,11 @@
             activate() {
                 _active = true;
                 tick(); // immediate first try
-                setInterval(tick, 2500);
+                if (_tickInterval) clearInterval(_tickInterval);
+                _tickInterval = setInterval(tick, 2500);
                 console.log('[Captcha] Module active (route-aware)');
             },
-            deactivate() { _active = false; },
+            deactivate() { _active = false; if (_tickInterval) { clearInterval(_tickInterval); _tickInterval = null; } },
             resetCache() { _solvedMap.clear(); }, // called when routes update
         };
     })();

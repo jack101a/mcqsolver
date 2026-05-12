@@ -1,3 +1,5 @@
+# NOTE: All file paths in this config are relative to the backend/ directory.
+# The server must be started from the backend/ directory or paths will resolve incorrectly.
 app_name: unified-platform
 server:
   host: 0.0.0.0

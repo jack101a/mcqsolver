@@ -14,13 +14,12 @@ export function useKeyHandlers({
 
   const createKey = useMutation({
     mutationFn: (payload) => apiPost("/admin/api/keys/create", payload),
-    onSuccess: (payload, _vars, { e }) => {
+    onSuccess: (payload) => {
       invalidate();
       if (payload.key_id && payload.api_key) {
         setRememberedKeys(prev => ({ ...prev, [String(payload.key_id)]: payload.api_key }));
       }
       setCreatedKeyModal({ open: true, keyId: payload.key_id ?? null, keyValue: payload.api_key || "" });
-      e.target.reset();
       setCreateKeyAllDomains(true);
       setCreateKeyDomainSelections([]);
       showToast("API key created.");
@@ -30,7 +29,9 @@ export function useKeyHandlers({
 
   const handleCreateKey = async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
+    const form = e.target;
+    const fd = new FormData(form);
+    form.reset();
     createKey.mutate({
       key_name: fd.get("key_name"),
       expiry_days: Number(fd.get("expiry_days") || 30),
@@ -39,7 +40,7 @@ export function useKeyHandlers({
       requests_per_minute: Number(fd.get("requests_per_minute") || 0),
       burst: Number(fd.get("burst") || 0),
       key_type: fd.get("key_type") || "user",
-    }, { e });
+    });
   };
 
   const handleCopyKey = async (keyValue) => {

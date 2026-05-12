@@ -117,11 +117,14 @@ class OnnxAIModel(BaseAIModel):
         vocab = self._vocab
 
         if raw.ndim == 3:
-            if raw.shape[1] == 1:
+            if raw.shape[1] == 1 and raw.shape[0] != 1:
                 # [T, B, C] layout — time-first export (our model: shape (63, 1, 63))
                 best_path = np.argmax(raw, axis=2)[:, 0]  # [T]
+            elif raw.shape[0] == 1:
+                # [B=1, T, C] layout — batch-first with single batch
+                best_path = np.argmax(raw[0], axis=1)  # [T]
             else:
-                # [B, T, C] layout — batch-first export
+                # [B, T, C] layout — batch-first export (B > 1)
                 best_path = np.argmax(raw[0], axis=1)  # [T]
         elif raw.ndim == 2:
             # [T, C] — already squeezed single-batch export
@@ -152,7 +155,10 @@ class OnnxAIModel(BaseAIModel):
         image = self._decode_payload_image(payload_base64)
         tensor = self._preprocess(image)
         started = time.perf_counter()
-        raw = self._session.run([self._output_name], {self._input_name: tensor})[0]
+        raw = await asyncio.to_thread(
+            self._session.run, [self._output_name], {self._input_name: tensor}
+        )
+        raw = raw[0]
         infer_ms = int((time.perf_counter() - started) * 1000)
         logger.info("onnx_inference_done", extra={"context": {"inference_ms": infer_ms}})
         return self._decode_ctc(raw)

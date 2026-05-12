@@ -3,6 +3,7 @@
     'use strict';
 
     window.ExamModule = (() => {
+        let _mainInterval = null;
         const CFG = {
             POLL_MS:           500,
             TOTAL_QUESTIONS:   15,
@@ -433,7 +434,8 @@
                     state.learningEnabled = d.learningEnabled !== false;
                 });
                 seedFromPage();
-                setInterval(mainLoop, CFG.POLL_MS);
+                if (_mainInterval) clearInterval(_mainInterval);
+                _mainInterval = setInterval(mainLoop, CFG.POLL_MS);
                 console.log('[Exam] Module active (lazy UI)');
             },
 

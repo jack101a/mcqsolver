@@ -33,28 +33,31 @@ class TestCacheService(unittest.TestCase):
 class TestExamService(unittest.TestCase):
     def setUp(self):
         self.mock_db = MagicMock()
-        with tempfile.TemporaryDirectory() as tmp:
-            self.tmp_dir = Path(tmp)
-            (self.tmp_dir / "questions").mkdir(parents=True)
-            (self.tmp_dir / "hashes").mkdir(parents=True)
-            
-            # Create dummy questions.json
-            (self.tmp_dir / "questions" / "questions.json").write_text(
-                json.dumps([{"question_text": "What is 2+2?", "correct_option_number": 1, "option_1": "4", "option_2": "5", "option_3": "6", "option_4": "7"}]),
-                encoding="utf-8"
-            )
-            # Create dummy sign_hashes.json
-            (self.tmp_dir / "hashes" / "sign_hashes.json").write_text(
-                json.dumps({"abc": "STOP"}),
-                encoding="utf-8"
-            )
-            # Create dummy sign_label.json
-            (self.tmp_dir / "hashes" / "sign_label.json").write_text(
-                json.dumps({"STOP": "Stop Sign"}),
-                encoding="utf-8"
-            )
-            
-            self.service = ExamService(db=self.mock_db, data_dir=self.tmp_dir)
+        self.tmp_dir_obj = tempfile.TemporaryDirectory()
+        self.tmp_dir = Path(self.tmp_dir_obj.name)
+        (self.tmp_dir / "questions").mkdir(parents=True)
+        (self.tmp_dir / "hashes").mkdir(parents=True)
+
+        # Create dummy questions.json
+        (self.tmp_dir / "questions" / "questions.json").write_text(
+            json.dumps([{"question_text": "What is 2+2?", "correct_option_number": 1, "option_1": "4", "option_2": "5", "option_3": "6", "option_4": "7"}]),
+            encoding="utf-8"
+        )
+        # Create dummy sign_hashes.json
+        (self.tmp_dir / "hashes" / "sign_hashes.json").write_text(
+            json.dumps({"abc": "STOP"}),
+            encoding="utf-8"
+        )
+        # Create dummy sign_label.json
+        (self.tmp_dir / "hashes" / "sign_label.json").write_text(
+            json.dumps({"STOP": "Stop Sign"}),
+            encoding="utf-8"
+        )
+
+        self.service = ExamService(db=self.mock_db, data_dir=self.tmp_dir)
+
+    def tearDown(self):
+        self.tmp_dir_obj.cleanup()
 
     def test_init_loads_data(self):
         self.assertEqual(len(self.service._questions), 1)

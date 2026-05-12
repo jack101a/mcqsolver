@@ -14,6 +14,7 @@ class CacheService:
     def __init__(self, ttl_seconds: int) -> None:
         self._ttl = ttl_seconds
         self._store: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._lock = threading.Lock()
         
         # Start background cleanup thread
         self._cleanup_thread = threading.Thread(target=self._periodic_cleanup, daemon=True)
@@ -28,9 +29,10 @@ class CacheService:
     def cleanup(self) -> None:
         """Remove all expired entries from the cache."""
         now = time.time()
-        expired = [k for k, (exp, _) in self._store.items() if now > exp]
-        for k in expired:
-            self._store.pop(k, None)
+        with self._lock:
+            expired = [k for k, (exp, _) in self._store.items() if now > exp]
+            for k in expired:
+                self._store.pop(k, None)
 
     def _key(
         self,
@@ -54,13 +56,14 @@ class CacheService:
         """Return cached result if not expired."""
 
         key = self._key(task_type, payload_base64, mode, domain=domain, field_name=field_name)
-        if key not in self._store:
-            return None
-        expires_at, data = self._store[key]
-        if time.time() > expires_at:
-            del self._store[key]
-            return None
-        return data
+        with self._lock:
+            if key not in self._store:
+                return None
+            expires_at, data = self._store[key]
+            if time.time() > expires_at:
+                del self._store[key]
+                return None
+            return data
 
     def set(
         self,
@@ -74,4 +77,5 @@ class CacheService:
         """Store cache value with TTL."""
 
         key = self._key(task_type, payload_base64, mode, domain=domain, field_name=field_name)
-        self._store[key] = (time.time() + self._ttl, value)
+        with self._lock:
+            self._store[key] = (time.time() + self._ttl, value)

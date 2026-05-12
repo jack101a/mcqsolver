@@ -107,8 +107,10 @@ async def upload_model(
             lifecycle_state="candidate",
         )
     except sqlite3.IntegrityError:
+        target.unlink(missing_ok=True)
         return _model_upload_error(request, "Model filename already exists")
     except Exception as exc:
+        target.unlink(missing_ok=True)
         return _model_upload_error(request, f"Upload failed: {exc}", status_code=500)
     _write_auto_backup(container, "upload_model")
     return _model_upload_success(
@@ -146,9 +148,11 @@ async def remove_model(request: Request, ai_model_id: int = Form(...)):
     runtime = entry.get("ai_runtime")
     filename = entry.get("ai_model_filename")
     if runtime == "onnx" and filename:
-        target = _MODELS_DIR / str(filename)
-        if target.exists():
-            target.unlink(missing_ok=True)
+        target = (_MODELS_DIR / str(filename)).resolve()
+        # Prevent path traversal: ensure the resolved path is within _MODELS_DIR
+        if _MODELS_DIR.resolve() in target.parents or target == _MODELS_DIR.resolve():
+            if target.exists():
+                target.unlink(missing_ok=True)
     container.db.delete_model_registry_entry(ai_model_id)
     _write_auto_backup(container, "remove_model")
     if _wants_json(request):
@@ -209,7 +213,7 @@ async def set_mapping(
         raise HTTPException(status_code=400, detail="task_type must be image|audio|text")
     clean_source_selector = source_selector.strip()
     clean_target_selector = target_selector.strip()
-    clean_field = _default_field_for_task(clean_task_type)
+    clean_field = field_name.strip() or _default_field_for_task(clean_task_type)
     clean_domain = Database._normalize_domain(domain)
     if not clean_domain:
         raise HTTPException(status_code=400, detail="domain is required")
@@ -250,7 +254,7 @@ async def update_mapping(
         raise HTTPException(status_code=400, detail="task_type must be image|audio|text")
     clean_source_selector = source_selector.strip()
     clean_target_selector = target_selector.strip()
-    clean_field = _default_field_for_task(clean_task_type)
+    clean_field = field_name.strip() or _default_field_for_task(clean_task_type)
     clean_domain = Database._normalize_domain(domain)
     if not clean_domain:
         raise HTTPException(status_code=400, detail="domain is required")

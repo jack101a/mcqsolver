@@ -84,6 +84,8 @@ export function Sidebar({ handleLogout }) {
             <div className="p-2 space-y-1">
               {NAV_ITEMS.map(({ path, label, icon: Icon }) => {
                 const active = location.pathname === path;
+                const activeBg = isDark ? "bg-white/10" : "bg-black/5";
+                const inactiveHover = isDark ? "hover:bg-white/5" : "hover:bg-black/5";
                 return (
                   <NavLink
                     key={path}
@@ -91,8 +93,8 @@ export function Sidebar({ handleLogout }) {
                     onClick={closeMobile}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                       active
-                        ? `${isDark ? "bg-white/10" : "bg-black/5"} ${t_textHeading}`
-                        : `${t_textMuted} hover:${isDark ? "bg-white/5" : "bg-black/5"}`
+                        ? `${activeBg} ${t_textHeading}`
+                        : `${t_textMuted} ${inactiveHover}`
                     }`}
                   >
                     <Icon size={18} /> {label}

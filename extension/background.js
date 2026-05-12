@@ -171,7 +171,7 @@ async function migrateUserscripts() {
 
 'use strict';
 
-const API_BASE = 'http://localhost:8780'; // Default API endpoint
+const API_BASE = 'http://localhost:8080'; // Default API endpoint (use HTTPS in production)
 const SYNC_ALARM = 'auto_sync';
 const STALL_KEEPALIVE_ALARM = 'stall_keepalive';
 const SYNC_PERIOD_MIN = 5;
@@ -183,6 +183,10 @@ let automationState = {
     step: 1,
     payloads: {}
 };
+
+// Promise that resolves once automation state is loaded from storage
+let _stateResolve;
+const _stateReady = new Promise(resolve => { _stateResolve = resolve; });
 
 function _persistAutomationState() {
     chrome.storage.local.set({ _automationState: automationState });
@@ -823,9 +827,11 @@ chrome.storage.local.get(['_automationState'], (stored) => {
         _stallKeepAliveTick();
         console.log('[STALL] Restored automation state from storage, step:', automationState.step);
     }
+    _stateResolve();
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+    lastRedirectAt.delete(tabId); // Clean up redirect throttle map
     if (automationState.active && automationState.tabId === tabId) {
         automationState.active = false;
         automationState.tabId = null;

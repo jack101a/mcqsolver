@@ -1,10 +1,10 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useMemo } from 'react';
 import { useTheme } from '../hooks/useTheme';
 
 const ThemeContext = createContext(null);
 
 export function ThemeProvider({ isDark, setIsDark, children }) {
-  const themeClasses = useTheme(isDark);
+  const themeClasses = useMemo(() => useTheme(isDark), [isDark]);
   const toggleDark = () => setIsDark(!isDark);
   return (
     <ThemeContext.Provider value={{ isDark, toggleDark, ...themeClasses }}>

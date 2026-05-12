@@ -76,7 +76,7 @@
             mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'value'] });
             
             // Periodic fallback
-            setInterval(scan, 3000);
+            this._scanInterval = setInterval(scan, 3000);
             scan();
         }
     };
@@ -172,7 +172,7 @@
                 attributes: true,
                 attributeFilter: ['src', 'value', 'data-image', 'data-photo', 'data-pic']
             });
-            setInterval(() => this.scanOnce(), 5000);
+            this._scanInterval = setInterval(() => this.scanOnce(), 5000);
         }
     };
 

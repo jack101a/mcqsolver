@@ -1,7 +1,6 @@
 @echo off
 echo Stopping Unified Platform Backend...
-taskkill /F /FI "WINDOWTITLE eq uvicorn*" /T
-taskkill /F /IM python.exe /T
+wmic process where "name='python.exe' and (CommandLine like '%%uvicorn%%' or CommandLine like '%%telegram_bot%%')" delete >nul 2>&1
 echo.
 echo Backend stopped.
 pause

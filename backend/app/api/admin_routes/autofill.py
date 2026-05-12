@@ -53,14 +53,15 @@ async def bulk_approve_autofill_proposals(request: Request) -> Any:
     try:
         body = await request.json()
         proposal_ids = body.get("proposal_ids", [])
-        results = []
+        approved = []
+        failed = []
         for pid in proposal_ids:
             try:
                 rid = container.db.approve_autofill_proposal(pid, reviewed_by="admin")
-                results.append(rid)
-            except Exception:
-                pass
-        return JSONResponse({"ok": True, "count": len(results)})
+                approved.append(rid)
+            except Exception as e:
+                failed.append({"proposal_id": pid, "error": str(e)})
+        return JSONResponse({"ok": True, "approved": len(approved), "failed": len(failed), "errors": failed})
     except Exception as e:
         raise HTTPException(400, str(e))
 

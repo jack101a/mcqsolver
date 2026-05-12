@@ -126,6 +126,37 @@ class UsageCycleService:
         finally:
             session.close()
 
+    def increment_usage_atomic(self, user_id: int, amount: int = 1) -> dict:
+        """Atomically increment usage count using a single UPDATE with WHERE clause.
+        This prevents TOCTOU races that could exceed the monthly limit under concurrent load."""
+        session = self._session()
+        try:
+            now = datetime.now(timezone.utc)
+            # Atomic: increment only if under limit, returns rowcount = 1 if successful
+            result = session.execute(
+                "UPDATE usage_cycles SET used_count = used_count + :amount, updated_at = :now "
+                "WHERE user_id = :user_id AND cycle_start_at <= :now AND cycle_end_at > :now "
+                "AND used_count + :amount <= monthly_limit AND blocked_at_limit = 0",
+                {"amount": amount, "now": now, "user_id": user_id}
+            )
+            session.commit()
+            if result.rowcount > 0:
+                # Re-fetch to get updated values
+                cycle = (
+                    session.query(UsageCycle)
+                    .filter(UsageCycle.user_id == user_id, UsageCycle.cycle_start_at <= now, UsageCycle.cycle_end_at > now)
+                    .first()
+                )
+                if cycle:
+                    return {"allowed": True, "used": cycle.used_count, "limit": cycle.monthly_limit, "cycle_id": cycle.id}
+            # Either no cycle or quota exceeded
+            return self.check_quota(user_id)
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def get_user_usage(self, user_id: int) -> dict:
         """Get current usage summary for a user."""
         cycle = self.get_or_create_cycle(user_id)

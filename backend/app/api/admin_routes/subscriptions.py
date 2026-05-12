@@ -33,7 +33,7 @@ async def create_plan(request: Request) -> Any:
     body = await request.json()
     try:
         plan = container.subscription_service.create_plan(
-            code=body["code"],
+            code=body.get("code"),
             name=body["name"],
             monthly_limit=body.get("monthly_limit", 1000),
             duration_days=body.get("duration_days", 30),

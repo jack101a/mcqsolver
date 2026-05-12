@@ -12,10 +12,10 @@ services:
       - DEBUG=${DEBUG:-true}
       - PORT=8080
       # Auth Settings
-      - AUTH_HASH_SALT=${AUTH_HASH_SALT:-test12345678}
-      - ADMIN_TOKEN=${ADMIN_TOKEN:-admin123}
+      - AUTH_HASH_SALT=${AUTH_HASH_SALT:-}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-123456}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       # Exam AI Settings
       - LITELLM_ENDPOINT=${LITELLM_ENDPOINT:-}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}

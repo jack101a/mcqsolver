@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -18,6 +19,7 @@ class UserKeyService:
     def __init__(self, session_factory, settings: Settings):
         self._session_factory = session_factory
         self._settings = settings
+        self._lock = threading.Lock()
 
     def _session(self) -> Session:
         return self._session_factory()
@@ -32,39 +34,40 @@ class UserKeyService:
     ) -> tuple[UserApiKey, str]:
         """Create a new API key for a user. Revokes any existing active key.
         Returns (key_record, plain_key)."""
-        session = self._session()
-        try:
-            # Revoke existing active keys for this user
-            session.query(UserApiKey).filter(
-                UserApiKey.user_id == user_id,
-                UserApiKey.status == "active",
-            ).update({"status": "rotated", "revoked_at": datetime.now(timezone.utc)})
+        with self._lock:
+            session = self._session()
+            try:
+                # Revoke existing active keys for this user
+                session.query(UserApiKey).filter(
+                    UserApiKey.user_id == user_id,
+                    UserApiKey.status == "active",
+                ).update({"status": "rotated", "revoked_at": datetime.now(timezone.utc)})
 
-            # Generate new key
-            plain = generate_plain_api_key(self._settings)
-            key_hash = hash_api_key(plain, self._settings.auth.hash_salt)
-            days = expiry_days or self._settings.auth.default_expiry_days
-            expires_at = compute_expiry_datetime(days)
+                # Generate new key
+                plain = generate_plain_api_key(self._settings)
+                key_hash = hash_api_key(plain, self._settings.auth.hash_salt)
+                days = expiry_days or self._settings.auth.default_expiry_days
+                expires_at = compute_expiry_datetime(days)
 
-            key = UserApiKey(
-                user_id=user_id,
-                key_hash=key_hash,
-                key_prefix_display=plain[:10] + "...",
-                status="active",
-                key_version=1,
-                issued_at=datetime.now(timezone.utc),
-                expires_at=expires_at,
-                created_by_admin_id=created_by_admin_id,
-            )
-            session.add(key)
-            session.commit()
-            session.refresh(key)
-            return key, plain
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+                key = UserApiKey(
+                    user_id=user_id,
+                    key_hash=key_hash,
+                    key_prefix_display=plain[:10] + "...",
+                    status="active",
+                    key_version=1,
+                    issued_at=datetime.now(timezone.utc),
+                    expires_at=expires_at,
+                    created_by_admin_id=created_by_admin_id,
+                )
+                session.add(key)
+                session.commit()
+                session.refresh(key)
+                return key, plain
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
 
     def rotate_key(
         self,
@@ -72,48 +75,49 @@ class UserKeyService:
         created_by_admin_id: int | None = None,
     ) -> tuple[UserApiKey, str]:
         """Rotate: revoke old key, issue new one with incremented version."""
-        session = self._session()
-        try:
-            old = (
-                session.query(UserApiKey)
-                .filter(UserApiKey.user_id == user_id, UserApiKey.status == "active")
-                .first()
-            )
-            old_version = old.key_version if old else 0
-            old_id = old.id if old else None
+        with self._lock:
+            session = self._session()
+            try:
+                old = (
+                    session.query(UserApiKey)
+                    .filter(UserApiKey.user_id == user_id, UserApiKey.status == "active")
+                    .first()
+                )
+                old_version = old.key_version if old else 0
+                old_id = old.id if old else None
 
-            # Revoke old
-            if old:
-                old.status = "rotated"
-                old.revoked_at = datetime.now(timezone.utc)
-                old.revoked_reason = "key_rotation"
+                # Revoke old
+                if old:
+                    old.status = "rotated"
+                    old.revoked_at = datetime.now(timezone.utc)
+                    old.revoked_reason = "key_rotation"
 
-            # Issue new
-            plain = generate_plain_api_key(self._settings)
-            key_hash = hash_api_key(plain, self._settings.auth.hash_salt)
-            days = self._settings.auth.default_expiry_days
-            expires_at = compute_expiry_datetime(days)
+                # Issue new
+                plain = generate_plain_api_key(self._settings)
+                key_hash = hash_api_key(plain, self._settings.auth.hash_salt)
+                days = self._settings.auth.default_expiry_days
+                expires_at = compute_expiry_datetime(days)
 
-            key = UserApiKey(
-                user_id=user_id,
-                key_hash=key_hash,
-                key_prefix_display=plain[:10] + "...",
-                status="active",
-                key_version=old_version + 1,
-                issued_at=datetime.now(timezone.utc),
-                expires_at=expires_at,
-                rotated_from_key_id=old_id,
-                created_by_admin_id=created_by_admin_id,
-            )
-            session.add(key)
-            session.commit()
-            session.refresh(key)
-            return key, plain
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+                key = UserApiKey(
+                    user_id=user_id,
+                    key_hash=key_hash,
+                    key_prefix_display=plain[:10] + "...",
+                    status="active",
+                    key_version=old_version + 1,
+                    issued_at=datetime.now(timezone.utc),
+                    expires_at=expires_at,
+                    rotated_from_key_id=old_id,
+                    created_by_admin_id=created_by_admin_id,
+                )
+                session.add(key)
+                session.commit()
+                session.refresh(key)
+                return key, plain
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
 
     def revoke_key(self, key_id: int, reason: str = "") -> UserApiKey | None:
         session = self._session()

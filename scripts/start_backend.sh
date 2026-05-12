@@ -16,9 +16,9 @@ fi
 
 mkdir -p logs
 UVICORN_WORKERS="${UVICORN_WORKERS:-2}"
-$PYTHON_BIN -u -m uvicorn app.main:app --host 0.0.0.0 --port 8780 --workers "$UVICORN_WORKERS" > logs/server.log 2>&1 &
+$PYTHON_BIN -u -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers "$UVICORN_WORKERS" > logs/server.log 2>&1 &
 disown
-echo "Backend started on port 8780 with $UVICORN_WORKERS uvicorn worker(s). Logs: backend/logs/server.log"
+echo "Backend started on port 8080 with $UVICORN_WORKERS uvicorn worker(s). Logs: backend/logs/server.log"
 
 # Start Telegram bot (reads TELEGRAM_BOT_TOKEN from env or DB)
 $PYTHON_BIN -u -m app.services.telegram_bot > logs/telegram_bot.log 2>&1 &

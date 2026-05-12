@@ -192,6 +192,10 @@ class SolverService:
                     field_name=job.field_name,
                 )
                 job.future.set_result(payload)
+            except asyncio.CancelledError:
+                if not job.future.done():
+                    job.future.set_exception(asyncio.CancelledError())
+                raise
             except Exception as error:
                 logger.exception(
                     "worker_failed",

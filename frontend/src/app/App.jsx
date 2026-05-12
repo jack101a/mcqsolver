@@ -30,6 +30,63 @@ import { useThemeContext } from "./context/ThemeContext";
 
 const KEY_MEM_KEY = "tata_admin_created_keys";
 
+function DashboardPage({
+  loading, stats, glassPanel, t_rowHover, t_textMuted, t_textHeading, isDark,
+  failedPayloads, selectedPayloads, allPayloadSelected, datasetsDir, modelHandlers,
+  apiKeys, access, masterKeyInfo,
+  createKeyAllDomains, setCreateKeyAllDomains, createKeyDomainSelections,
+  keyHandlers, settingsHandlers,
+}) {
+  const latencyValue = (() => {
+    const v = Math.max(0, Math.round(Number(stats.avg_processing_ms || 0)));
+    return v > 9999 ? "9999+" : String(v);
+  })();
+
+  const statCards = [
+    { label: "Total Requests", value: stats.total_requests?.toLocaleString() || "0", color: "text-indigo-500",   icon: BarChart3 },
+    { label: "Success",        value: stats.successful_requests?.toLocaleString() || "0", color: "text-emerald-500", icon: CheckCircle2 },
+    { label: "Failed",         value: stats.failed_requests?.toLocaleString() || "0", color: "text-rose-500",    icon: XCircle },
+    { label: "Avg Latency",    value: `${latencyValue}ms`, color: "text-cyan-500",    icon: Timer },
+  ];
+
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {loading
+          ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+          : statCards.map((s, i) => {
+          const Icon = s.icon;
+          return (
+          <div key={i} className={`rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group ${glassPanel} ${t_rowHover}`}>
+            <div>
+              <p className={`text-sm font-medium mb-1 ${t_textMuted}`}>{s.label}</p>
+              <p className={`text-2xl sm:text-3xl font-bold tracking-tight ${t_textHeading}`}>{s.value}</p>
+            </div>
+            <div className={`p-3 rounded-xl border group-hover:scale-110 transition-transform ${isDark ? "bg-white/[0.05] border-white/5" : "bg-white border-white/60 shadow-sm"} ${s.color}`}>
+              <Icon size={24} />
+            </div>
+          </div>
+        )})
+        }
+      </div>
+
+      <DashboardPanel
+        failedPayloads={failedPayloads} selectedPayloads={selectedPayloads}
+        allPayloadSelected={allPayloadSelected} datasetsDir={datasetsDir}
+        loading={loading}
+        {...modelHandlers}
+      />
+
+      <KeysPanel
+        apiKeys={apiKeys} access={access} masterKeyInfo={masterKeyInfo}
+        createKeyAllDomains={createKeyAllDomains} setCreateKeyAllDomains={setCreateKeyAllDomains}
+        createKeyDomainSelections={createKeyDomainSelections}
+        {...keyHandlers} {...settingsHandlers}
+      />
+    </div>
+  );
+}
+
 export function App() {
   const { toast, showToast } = useToast();
   const {
@@ -58,11 +115,6 @@ export function App() {
   const [settingsCustomDomain,     setSettingsCustomDomain]     = useState("");
   const [createKeyAllDomains,       setCreateKeyAllDomains]       = useState(true);
   const [createKeyDomainSelections, setCreateKeyDomainSelections] = useState([]);
-
-  const latencyValue = (() => {
-    const v = Math.max(0, Math.round(Number(stats.avg_processing_ms || 0)));
-    return v > 9999 ? "9999+" : String(v);
-  })();
 
   const mappingsByDomain = (() => {
     const grouped = {};
@@ -121,50 +173,6 @@ export function App() {
 
   const proposalHandlers = useProposalHandlers({ showToast });
 
-  const statCards = [
-          { label: "Total Requests", value: stats.total_requests?.toLocaleString() || "0", color: "text-indigo-500",   icon: BarChart3 },
-          { label: "Success",        value: stats.successful_requests?.toLocaleString() || "0", color: "text-emerald-500", icon: CheckCircle2 },
-          { label: "Failed",         value: stats.failed_requests?.toLocaleString() || "0", color: "text-rose-500",    icon: XCircle },
-          { label: "Avg Latency",    value: `${latencyValue}ms`, color: "text-cyan-500",    icon: Timer },
-        ];
-
-  const dashboardPage = (
-    <div className="space-y-8">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {loading
-          ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
-          : statCards.map((s, i) => {
-          const Icon = s.icon;
-          return (
-          <div key={i} className={`rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group ${glassPanel} ${t_rowHover}`}>
-            <div>
-              <p className={`text-sm font-medium mb-1 ${t_textMuted}`}>{s.label}</p>
-              <p className={`text-2xl sm:text-3xl font-bold tracking-tight ${t_textHeading}`}>{s.value}</p>
-            </div>
-            <div className={`p-3 rounded-xl border group-hover:scale-110 transition-transform ${isDark ? "bg-white/[0.05] border-white/5" : "bg-white border-white/60 shadow-sm"} ${s.color}`}>
-              <Icon size={24} />
-            </div>
-          </div>
-        )})
-        }
-      </div>
-
-      <DashboardPanel
-        failedPayloads={failedPayloads} selectedPayloads={selectedPayloads}
-        allPayloadSelected={allPayloadSelected} datasetsDir={datasetsDir}
-        loading={loading}
-        {...modelHandlers}
-      />
-
-      <KeysPanel
-        apiKeys={apiKeys} access={access} masterKeyInfo={masterKeyInfo}
-        createKeyAllDomains={createKeyAllDomains} setCreateKeyAllDomains={setCreateKeyAllDomains}
-        createKeyDomainSelections={createKeyDomainSelections}
-        {...keyHandlers} {...settingsHandlers}
-      />
-    </div>
-  );
-
   return (
     <ErrorBoundary>
       <DashboardLayout
@@ -176,7 +184,19 @@ export function App() {
         <Suspense fallback={<div className="flex items-center justify-center py-20"><div className={`animate-spin rounded-full h-8 w-8 border-2 border-t-transparent ${isDark ? "border-indigo-400" : "border-indigo-600"}`} /></div>}>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={dashboardPage} />
+          <Route path="/dashboard" element={<DashboardPage
+            loading={loading} stats={stats}
+            glassPanel={glassPanel} t_rowHover={t_rowHover}
+            t_textMuted={t_textMuted} t_textHeading={t_textHeading} isDark={isDark}
+            failedPayloads={failedPayloads} selectedPayloads={selectedPayloads}
+            allPayloadSelected={allPayloadSelected} datasetsDir={datasetsDir}
+            modelHandlers={modelHandlers}
+            apiKeys={apiKeys} access={access} masterKeyInfo={masterKeyInfo}
+            createKeyAllDomains={createKeyAllDomains}
+            setCreateKeyAllDomains={setCreateKeyAllDomains}
+            createKeyDomainSelections={createKeyDomainSelections}
+            keyHandlers={keyHandlers} settingsHandlers={settingsHandlers}
+          />} />
           <Route path="/subscriptions" element={<SubscriptionsPanel showToast={showToast} />} />
           <Route path="/userscripts" element={<UserscriptsPanel userscripts={userscripts} refreshUserscripts={refresh} showToast={showToast} />} />
           <Route path="/models" element={

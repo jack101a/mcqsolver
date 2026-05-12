@@ -50,7 +50,7 @@ export function KeysPanel({
                   {masterKeyInfo.key}
                 </div>
                 <button 
-                  onClick={() => { navigator.clipboard.writeText(masterKeyInfo.key); }}
+                  onClick={() => { navigator.clipboard.writeText(masterKeyInfo.key).catch(() => {}); }}
                   className={`p-2 rounded-lg border transition-all ${glassButton}`}
                   title="Copy Master Key"
                   aria-label="Copy master key to clipboard"

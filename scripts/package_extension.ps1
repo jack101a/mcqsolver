@@ -1,7 +1,4 @@
 # package_extension.ps1
-$SourceDir = "extension"
-$BuildDir = "frontend/dist/assets"
-$ZipFile = "$BuildDir/mcq_solver_extension.zip"
 $ExtensionDir = "extension"
 $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $OutputDir = "$PSScriptRoot\..\backend\app\static\extensions"

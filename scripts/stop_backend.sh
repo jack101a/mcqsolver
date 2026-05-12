@@ -1,3 +1,4 @@
 #!/bin/bash
 pkill -f "uvicorn app.main:app"
-echo "Backend stopped."
+pkill -f "app.services.telegram_bot"
+echo "Backend and Telegram bot stopped."

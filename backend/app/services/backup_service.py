@@ -46,10 +46,14 @@ class BackupService:
         }
 
         try:
-            # 1. Database dump
+            # 1. Database dump (atomic via sqlite3.backup API)
             db_backup = backup_path / "database.sqlite"
             if self._db_path.exists():
-                shutil.copy2(self._db_path, db_backup)
+                src = sqlite3.connect(str(self._db_path))
+                dst = sqlite3.connect(str(db_backup))
+                src.backup(dst)
+                dst.close()
+                src.close()
                 result["db_size_bytes"] = db_backup.stat().st_size
                 result["files"].append(str(db_backup))
 
@@ -160,7 +164,11 @@ class BackupService:
         return backups
 
     def restore_from_backup(self, backup_id: str) -> dict:
-        """Restore database from a backup. Returns result."""
+        """Restore database from a backup. Returns result.
+        
+        WARNING: The server should be stopped before restore to avoid
+        database corruption from active connections.
+        """
         backup_path = self._backup_dir / backup_id
         if not backup_path.exists():
             return {"status": "failed", "error": f"Backup {backup_id} not found"}
@@ -175,8 +183,12 @@ class BackupService:
             if self._db_path.exists():
                 shutil.copy2(self._db_path, safety)
 
-            # Restore
-            shutil.copy2(db_backup, self._db_path)
+            # Restore using atomic sqlite3.backup
+            src = sqlite3.connect(str(db_backup))
+            dst = sqlite3.connect(str(self._db_path))
+            src.backup(dst)
+            dst.close()
+            src.close()
 
             logger.info("restore_completed", extra={"context": {"backup_id": backup_id}})
             return {"status": "completed", "backup_id": backup_id, "safety_copy": str(safety)}

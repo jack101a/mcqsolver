@@ -452,8 +452,11 @@ async def upload_qr_image(request: Request, file: UploadFile = File(...)):
 
 
 @router.get("/api/settings/qr-image")
-async def get_qr_image():
+async def get_qr_image(request: Request):
     """Serve the uploaded QR code image."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
     for ext in ("png", "jpg", "jpeg", "gif", "webp"):
         fp = _QR_DIR / f"qr_code.{ext}"
         if fp.exists():

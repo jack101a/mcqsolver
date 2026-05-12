@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import os, signal, subprocess, sys
+import os, signal, subprocess, sys, shlex
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -134,12 +134,18 @@ async def restart_server(request: Request) -> Any:
     if not script.exists():
         return JSONResponse({"ok": False, "error": "start script not found"}, status_code=500)
 
-    # Kill old processes, wait for port to free, then start fresh
-    os.system("pkill -9 -f 'uvicorn app.main' 2>/dev/null; pkill -9 -f 'telegram_bot' 2>/dev/null")
-    import time
-    time.sleep(2)
+    # Spawn restart in a detached subprocess.
+    # Use a shell command that waits 2s (to let the HTTP response be sent),
+    # then kills old processes, then starts fresh ones.
+    # start_new_session=True ensures the child survives even if parent is killed.
+    cmd = (
+        f"sleep 2; "
+        f"pkill -9 -f 'uvicorn app.main' 2>/dev/null; "
+        f"pkill -9 -f 'telegram_bot' 2>/dev/null; "
+        f"exec bash {shlex.quote(str(script))}"
+    )
     subprocess.Popen(
-        ["bash", str(script)],
+        ["bash", "-c", cmd],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )

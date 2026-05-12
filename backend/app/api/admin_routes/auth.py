@@ -42,10 +42,6 @@ async def admin_login_submit(
 
     logger.info("admin_login_attempt",
         extra={"context": {
-            "submitted_username": admin_username,
-            "submitted_password_len": len(admin_password),
-            "expected_username": settings.auth.admin_username,
-            "expected_password_len": len(settings.auth.admin_password),
             "has_user_pass": has_user_pass,
         }}
     )
