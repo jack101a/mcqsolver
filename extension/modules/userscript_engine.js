@@ -14,6 +14,7 @@
     if (window.__UP_GM_SHIM_READY__) return;
     window.__UP_GM_SHIM_READY__ = true;
     const callbacks = {};
+    const valueListeners = {};
     function request(action, payload, scriptId) {
         const requestId = Math.random().toString(36).slice(2);
         window.postMessage({ type: 'GM_REQUEST', action, requestId, scriptId, ...payload }, '*');
@@ -35,46 +36,144 @@
         if (e.data.error) cb.reject(new Error(e.data.error));
         else cb.resolve(e.data);
     });
-    window.__createGMApi = function(scriptId) {
+    window.addEventListener('message', (e) => {
+        if (e.source !== window || e.data?.type !== 'GM_VALUE_CHANGED') return;
+        const scriptId = e.data.scriptId || 'global';
+        const hooks = valueListeners[scriptId] || {};
+        const oldStore = e.data.oldValue || {};
+        const newStore = e.data.newValue || {};
+        const keys = new Set([...Object.keys(oldStore), ...Object.keys(newStore)]);
+        keys.forEach(key => {
+            Object.values(hooks[key] || {}).forEach(fn => {
+                try { fn(key, oldStore[key], newStore[key], true); } catch (err) { console.error(err); }
+            });
+        });
+    });
+    window.__createGMApi = function(scriptId, info) {
         const addStyle = (css) => {
             const style = document.createElement('style');
             style.textContent = String(css || '');
             (document.head || document.documentElement).appendChild(style);
             return style;
         };
+        const addElement = (parent, tag, attrs) => {
+            if (typeof parent === 'string') {
+                attrs = tag;
+                tag = parent;
+                parent = document.head || document.documentElement;
+            }
+            const el = document.createElement(String(tag || 'div'));
+            Object.entries(attrs || {}).forEach(([name, val]) => {
+                if (name === 'textContent') el.textContent = val;
+                else if (name === 'innerHTML') el.innerHTML = val;
+                else el.setAttribute(name, val);
+            });
+            (parent || document.head || document.documentElement).appendChild(el);
+            return el;
+        };
+        const addValueChangeListener = (key, fn) => {
+            if (typeof fn !== 'function') return '';
+            const id = Math.random().toString(36).slice(2);
+            const bucket = valueListeners[scriptId] = valueListeners[scriptId] || {};
+            const hooks = bucket[key] = bucket[key] || {};
+            hooks[id] = fn;
+            request('addValueChangeListener', { key, listenerId: id }, scriptId).catch(() => {});
+            return id;
+        };
+        const removeValueChangeListener = (listenerId) => {
+            Object.values(valueListeners[scriptId] || {}).forEach(hooks => delete hooks[listenerId]);
+            request('removeValueChangeListener', { listenerId }, scriptId).catch(() => {});
+        };
         const api = {
+            info: info || {},
             addStyle,
+            addElement,
             getValue: (key, defaultValue) => request('getValue', { key, defaultValue }, scriptId).then(r => r.value),
             setValue: (key, value) => request('setValue', { key, value }, scriptId).then(r => r.ok),
             deleteValue: (key) => request('deleteValue', { key }, scriptId).then(r => r.ok),
             listValues: () => request('listValues', {}, scriptId).then(r => r.values || []),
+            addValueChangeListener,
+            removeValueChangeListener,
             notification: (details) => request('notification', { details }, scriptId).catch(() => ({ ok: false })),
+            openInTab: (url, opts) => request('openInTab', { details: { ...(opts || {}), url } }, scriptId),
+            download: (details, name) => request('download', { details: typeof details === 'string' ? { url: details, name } : details }, scriptId),
+            registerMenuCommand: (text, cb, opts) => {
+                const id = opts?.id || Math.random().toString(36).slice(2);
+                request('registerMenuCommand', { details: { id, text } }, scriptId).catch(() => {});
+                return id;
+            },
+            unregisterMenuCommand: (id) => request('unregisterMenuCommand', { details: { id } }, scriptId).catch(() => {}),
+            log: (...args) => request('log', { details: { args } }, scriptId).catch(() => console.log(...args)),
             setClipboard: (text) => navigator.clipboard?.writeText ? navigator.clipboard.writeText(String(text || '')) : Promise.reject(new Error('clipboard unavailable')),
             xmlhttpRequest: (details) => {
+                details = details || {};
+                const xhrId = Math.random().toString(36).slice(2);
+                let aborted = false;
+                const fire = (name, payload) => {
+                    try {
+                        const fn = details && details['on' + name];
+                        if (typeof fn === 'function') fn(payload);
+                    } catch (err) {
+                        console.error('[GM_xmlhttpRequest callback]', err);
+                    }
+                };
                 const safe = {
                     method: details?.method || 'GET',
                     url: details?.url || '',
                     headers: details?.headers || {},
                     data: details?.data ?? null,
+                    timeout: Number(details?.timeout || 0) || 0,
+                    responseType: details?.responseType || '',
                     anonymous: !!details?.anonymous,
+                    xhrId,
                 };
+                fire('loadstart', { readyState: 1, responseText: '', response: null });
+                fire('readystatechange', { readyState: 1, responseText: '', response: null });
                 request('xmlhttpRequest', { details: safe }, scriptId)
                     .then(r => {
-                        if (r.response) details?.onload?.(r.response);
+                        if (aborted || r.aborted) {
+                            fire('abort', { readyState: 4, error: r.error || 'aborted' });
+                        } else if (r.timedOut) {
+                            fire('timeout', { readyState: 4, error: r.error || 'timeout' });
+                        } else if (r.error) {
+                            fire('error', { readyState: 4, error: r.error });
+                        } else if (r.response) {
+                            fire('readystatechange', r.response);
+                            fire('progress', { ...r.response, lengthComputable: false, loaded: String(r.response.responseText || '').length, total: 0 });
+                            fire('load', r.response);
+                        }
+                        fire('loadend', r.response || { readyState: 4, error: r.error });
                     })
-                    .catch(err => details?.onerror?.({ error: err.message }));
+                    .catch(err => {
+                        fire(aborted ? 'abort' : 'error', { readyState: 4, error: err.message });
+                        fire('loadend', { readyState: 4, error: err.message });
+                    });
+                return {
+                    abort() {
+                        aborted = true;
+                        request('xmlhttpAbort', { details: { xhrId } }, scriptId).catch(() => {});
+                    }
+                };
             },
         };
         return api;
     };
     window.GM_addStyle = window.GM_addStyle || ((css) => window.__createGMApi('global').addStyle(css));
+    window.GM_addElement = window.GM_addElement || ((parent, tag, attrs) => window.__createGMApi('global').addElement(parent, tag, attrs));
     window.GM_getValue = window.GM_getValue || ((key, fallback) => window.__createGMApi('global').getValue(key, fallback));
     window.GM_setValue = window.GM_setValue || ((key, value) => window.__createGMApi('global').setValue(key, value));
     window.GM_deleteValue = window.GM_deleteValue || ((key) => window.__createGMApi('global').deleteValue(key));
     window.GM_listValues = window.GM_listValues || (() => window.__createGMApi('global').listValues());
+    window.GM_addValueChangeListener = window.GM_addValueChangeListener || ((key, fn) => window.__createGMApi('global').addValueChangeListener(key, fn));
+    window.GM_removeValueChangeListener = window.GM_removeValueChangeListener || ((id) => window.__createGMApi('global').removeValueChangeListener(id));
     window.GM_xmlhttpRequest = window.GM_xmlhttpRequest || ((details) => window.__createGMApi('global').xmlhttpRequest(details));
     window.GM_notification = window.GM_notification || ((details) => window.__createGMApi('global').notification(details));
     window.GM_setClipboard = window.GM_setClipboard || ((text) => window.__createGMApi('global').setClipboard(text));
+    window.GM_openInTab = window.GM_openInTab || ((url, opts) => window.__createGMApi('global').openInTab(url, opts));
+    window.GM_download = window.GM_download || ((details, name) => window.__createGMApi('global').download(details, name));
+    window.GM_registerMenuCommand = window.GM_registerMenuCommand || ((text, cb, opts) => window.__createGMApi('global').registerMenuCommand(text, cb, opts));
+    window.GM_unregisterMenuCommand = window.GM_unregisterMenuCommand || ((id) => window.__createGMApi('global').unregisterMenuCommand(id));
+    window.GM_log = window.GM_log || ((...args) => window.__createGMApi('global').log(...args));
     window.GM = window.GM || window.__createGMApi('global');
 })();
 `;
@@ -115,51 +214,19 @@
         }
     });
 
-    function urlMatchesPattern(url, pattern) {
-        if (pattern === '<all_urls>') return true;
-        
-        let p = pattern;
-        let isHttpAny = false;
-        if (p.startsWith('*://')) {
-            isHttpAny = true;
-            p = p.slice(4);
-        }
-        
-        let regexStr = p
-            .replace(/[.+?^${}()|[\]\\]/g, '\\$&') // Escape special chars
-            .replace(/\\\*/g, '.*'); // Replace \* with .*
-            
-        if (isHttpAny) {
-            regexStr = '^https?:\\/\\/' + regexStr;
-        } else {
-            regexStr = '^' + regexStr;
-        }
-        regexStr += '$';
-        
-        try {
-            const regex = new RegExp(regexStr, 'i');
-            return regex.test(url);
-        } catch (e) {
-            console.error(`[Userscript Engine] Invalid match pattern: ${pattern}`, e);
-            return false;
-        }
-    }
-    
-    function shouldRun(script, url) {
-        if (!script.enabled) return false;
-        
-        const meta = script.parsedMeta;
-        if (!meta || !meta.matches || meta.matches.length === 0) return false;
-        if (meta.noframes && window.top !== window.self) return false;
-        
-        // Check excludes first
-        if (meta.exclude && meta.exclude.some(pattern => urlMatchesPattern(url, pattern))) {
-            return false;
-        }
-        
-        // Check matches
-        return meta.matches.some(pattern => urlMatchesPattern(url, pattern));
-    }
+    chrome.runtime.onMessage.addListener((msg) => {
+        if (msg?.type !== 'USERSCRIPT_VALUE_CHANGED') return false;
+        window.postMessage({
+            type: 'GM_VALUE_CHANGED',
+            scriptId: msg.scriptId,
+            oldValue: msg.oldValue || {},
+            newValue: msg.newValue || {}
+        }, '*');
+        return false;
+    });
+
+    const matcher = window.UserscriptMatcher;
+    const runtime = window.UserscriptRuntime;
 
     function scriptNeedsGMShim(scriptData) {
         const meta = scriptData.parsedMeta || {};
@@ -177,6 +244,20 @@
         const id = scriptData.id || scriptData.name || 'unknown';
         const name = scriptData.name || meta.name || id;
         const safeName = String(name).replace(/'/g, "\\'");
+        const gmInfo = {
+            script: {
+                name,
+                namespace: meta.namespace || '',
+                version: scriptData.version || meta.version || '',
+                description: meta.description || '',
+                matches: meta.matches || [],
+                includes: meta.includes || [],
+                excludes: meta.exclude || [],
+                resources: meta.resources || []
+            },
+            scriptHandler: 'Unified Platform',
+            version: '2.2.0'
+        };
         const resourceMap = {};
         for (const item of scriptData.bundledResources || []) {
             if (item && item.name) resourceMap[item.name] = { text: item.text || '', dataUrl: item.dataUrl || '' };
@@ -185,15 +266,24 @@
 (function(){
   const unsafeWindow = window;
   const __resources = ${JSON.stringify(resourceMap)};
-  const GM = window.__createGMApi ? window.__createGMApi(${JSON.stringify(id)}) : window.GM;
+  const GM_info = ${JSON.stringify(gmInfo)};
+  const GM = window.__createGMApi ? window.__createGMApi(${JSON.stringify(id)}, GM_info) : window.GM;
   const GM_addStyle = GM && GM.addStyle ? GM.addStyle.bind(GM) : function(){};
+  const GM_addElement = GM && GM.addElement ? GM.addElement.bind(GM) : function(){};
   const GM_getValue = GM && GM.getValue ? GM.getValue.bind(GM) : function(key, fallback){ return Promise.resolve(fallback); };
   const GM_setValue = GM && GM.setValue ? GM.setValue.bind(GM) : function(){ return Promise.resolve(false); };
   const GM_deleteValue = GM && GM.deleteValue ? GM.deleteValue.bind(GM) : function(){ return Promise.resolve(false); };
   const GM_listValues = GM && GM.listValues ? GM.listValues.bind(GM) : function(){ return Promise.resolve([]); };
+  const GM_addValueChangeListener = GM && GM.addValueChangeListener ? GM.addValueChangeListener.bind(GM) : function(){ return ''; };
+  const GM_removeValueChangeListener = GM && GM.removeValueChangeListener ? GM.removeValueChangeListener.bind(GM) : function(){};
   const GM_xmlhttpRequest = GM && GM.xmlhttpRequest ? GM.xmlhttpRequest.bind(GM) : function(){};
   const GM_notification = GM && GM.notification ? GM.notification.bind(GM) : function(){};
   const GM_setClipboard = GM && GM.setClipboard ? GM.setClipboard.bind(GM) : function(){};
+  const GM_openInTab = GM && GM.openInTab ? GM.openInTab.bind(GM) : function(){};
+  const GM_download = GM && GM.download ? GM.download.bind(GM) : function(){};
+  const GM_registerMenuCommand = GM && GM.registerMenuCommand ? GM.registerMenuCommand.bind(GM) : function(){ return ''; };
+  const GM_unregisterMenuCommand = GM && GM.unregisterMenuCommand ? GM.unregisterMenuCommand.bind(GM) : function(){};
+  const GM_log = GM && GM.log ? GM.log.bind(GM) : console.log.bind(console);
   const GM_getResourceText = function(name){ return (__resources[name] && __resources[name].text) || ''; };
   const GM_getResourceURL = function(name){ return (__resources[name] && __resources[name].dataUrl) || ''; };
   try {
@@ -216,7 +306,7 @@ ${scriptData.rawCode || ''}
                 type: 'EXECUTE_IN_MAIN',
                 code: buildWrappedCode(scriptData),
                 name: scriptData.name,
-                id: scriptData.id
+                id: scriptData.executionId || scriptData.id
             });
             if (response?.ok === false) throw new Error(response.error || 'execution failed');
             console.log(`[Userscript Engine] Executed script: ${scriptData.name}`);
@@ -232,52 +322,7 @@ ${scriptData.rawCode || ''}
         }
     }
     
-    async function injectScript(code, name, id, requires) {
-        try {
-            // Fetch @require dependencies first
-            let requireCode = '';
-            if (requires && requires.length > 0) {
-                for (const url of requires) {
-                    try {
-                        const resp = await fetch(url);
-                        if (resp.ok) {
-                            requireCode += await resp.text() + '\n';
-                            console.log(`[Userscript Engine] Loaded @require: ${url}`);
-                        } else {
-                            console.warn(`[Userscript Engine] @require failed (${resp.status}): ${url}`);
-                        }
-                    } catch (e) {
-                        console.warn(`[Userscript Engine] @require fetch error for ${url}:`, e.message);
-                    }
-                }
-            }
-            
-            const fullCode = requireCode + code;
-            await chrome.runtime.sendMessage({
-                type: 'EXECUTE_IN_MAIN',
-                code: fullCode,
-                name: name,
-                id: id
-            });
-            console.log(`[Userscript Engine] Executed script: ${name}`);
-        } catch (e) {
-            console.error(`[Userscript Engine] Error injecting script ${name}:`, e);
-        }
-    }
     
-    function injectScriptAtStart(code, name, id) {
-        try {
-            chrome.runtime.sendMessage({
-                type: 'EXECUTE_IN_MAIN',
-                code,
-                name,
-                id
-            });
-            console.log(`[Userscript Engine] document-start execution requested: ${name}`);
-        } catch (e) {
-            console.error(`[Userscript Engine] document-start execution failed for ${name}:`, e);
-        }
-    }
     
     function scheduleExecution(scriptData) {
         const { parsedMeta, rawCode, id, name } = scriptData;
@@ -306,6 +351,10 @@ ${scriptData.rawCode || ''}
     }
     
     try {
+        if (!matcher || !runtime) {
+            console.error('[Userscript Engine] Runtime helpers missing.');
+            return;
+        }
         let data = await chrome.storage.local.get(['normalized_userscripts', 'userscriptsEnabled']);
         if (data.userscriptsEnabled === false) {
             console.log('[Userscript Engine] Global userscripts toggle is disabled.');
@@ -323,16 +372,21 @@ ${scriptData.rawCode || ''}
                 console.debug('[Userscript Engine] On-demand sync failed:', e);
             }
         }
-        const currentUrl = location.href;
-    
-        let ranAny = false;
-        for (const scriptData of scripts) {
-            if (shouldRun(scriptData, currentUrl)) {
-                scheduleExecution(scriptData);
-                ranAny = true;
-            }
-        }
-        if (!ranAny) {
+        const runForUrl = (url, reason) => runtime.runMatchingScripts({
+            scripts,
+            url,
+            reason,
+            execute: executeScriptData,
+            shouldRun: matcher.shouldRun
+        });
+
+        const ranCount = runForUrl(location.href, 'load');
+        runtime.installSpaWatcher((url) => {
+            const spaCount = runForUrl(url, 'spa');
+            if (spaCount) console.log(`[Userscript Engine] SPA route matched ${spaCount} script(s): ${url}`);
+        });
+
+        if (!ranCount) {
             console.log('[Userscript Engine] No scripts matched current URL.');
         }
     } catch (e) {

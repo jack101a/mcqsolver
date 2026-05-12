@@ -43,6 +43,12 @@ def _ensure_headers(name: str, version: str, matches: list[str], runAt: str, cod
     return "\n".join(header) + "\n" + code
 
 
+def _userscript_sync_status(meta: dict) -> str:
+    diagnostics = meta.get("diagnostics") if isinstance(meta, dict) else {}
+    errors = diagnostics.get("errors") if isinstance(diagnostics, dict) else []
+    return "error" if errors else "ready"
+
+
 def _update_index():
     _USERSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     index_path = (_USERSCRIPTS_DIR / "index.json").resolve()
@@ -71,15 +77,20 @@ def _update_index():
             "file": file_path.name,
             "name": meta["name"] or uid,
             "version": meta["version"],
+            "sourceUrl": meta["downloadURL"],
             "enabled": enabled,
             "matches": meta["matches"],
+            "includes": meta["includes"],
             "exclude": meta["exclude"],
+            "excludeMatches": meta["excludeMatches"],
             "runAt": meta["runAt"],
             "requires": meta["requires"],
             "resources": meta["resources"],
             "grants": meta["grants"],
             "connects": meta["connects"],
             "noframes": meta["noframes"],
+            "diagnostics": meta.get("diagnostics", {"warnings": [], "errors": []}),
+            "syncStatus": _userscript_sync_status(meta),
         })
     index_path.write_text(json.dumps(new_index, indent=2), encoding="utf-8")
 
@@ -304,6 +315,8 @@ async def list_userscripts(request: Request):
                         "requires_count": len(entry.get("requires") if isinstance(entry.get("requires"), list) else parsed["requires"]),
                         "grants": entry.get("grants") if isinstance(entry.get("grants"), list) else parsed["grants"],
                         "runAt": str(entry.get("runAt") or parsed["runAt"]),
+                        "diagnostics": parsed.get("diagnostics", {"warnings": [], "errors": []}),
+                        "syncStatus": _userscript_sync_status(parsed),
                         "updated_at": file_path.stat().st_mtime,
                         "code": code,
                     })
@@ -325,11 +338,34 @@ async def list_userscripts(request: Request):
                 "requires_count": len(parsed["requires"]),
                 "grants": parsed["grants"],
                 "runAt": parsed["runAt"],
+                "diagnostics": parsed.get("diagnostics", {"warnings": [], "errors": []}),
+                "syncStatus": _userscript_sync_status(parsed),
                 "updated_at": file_path.stat().st_mtime,
                 "code": code,
             })
     
     return {"scripts": scripts, "count": len(scripts)}
+
+
+@router.post("/api/userscripts/validate")
+async def validate_userscript(request: Request):
+    """Validate pasted userscript code without saving it."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+
+    code_body = body.get("code", "")
+    meta = parse_userscript_meta(code_body)
+    return {
+        "ok": not bool(meta.get("diagnostics", {}).get("errors")),
+        "meta": meta,
+        "diagnostics": meta.get("diagnostics", {"warnings": [], "errors": []}),
+        "syncStatus": _userscript_sync_status(meta),
+    }
 
 
 @router.post("/api/userscripts")
@@ -367,7 +403,14 @@ async def create_userscript(request: Request):
         raise HTTPException(400, f"Userscript with id {uid} already exists")
     file_path.write_text(final_code, encoding="utf-8")
     _update_index()
-    return {"ok": True, "id": uid}
+    final_meta = parse_userscript_meta(final_code)
+    return {
+        "ok": True,
+        "id": uid,
+        "meta": final_meta,
+        "diagnostics": final_meta.get("diagnostics", {"warnings": [], "errors": []}),
+        "syncStatus": _userscript_sync_status(final_meta),
+    }
 
 
 @router.put("/api/userscripts/{uid}")
@@ -403,7 +446,14 @@ async def update_userscript(request: Request, uid: str):
         raise HTTPException(404, f"Userscript {uid} not found")
     file_path.write_text(final_code, encoding="utf-8")
     _update_index()
-    return {"ok": True, "id": uid}
+    final_meta = parse_userscript_meta(final_code)
+    return {
+        "ok": True,
+        "id": uid,
+        "meta": final_meta,
+        "diagnostics": final_meta.get("diagnostics", {"warnings": [], "errors": []}),
+        "syncStatus": _userscript_sync_status(final_meta),
+    }
 
 
 @router.delete("/api/userscripts/{uid}")

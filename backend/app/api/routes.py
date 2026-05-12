@@ -94,6 +94,12 @@ def _allow_report(key_id: int, domain: str) -> bool:
     return True
 
 
+def _userscript_sync_status(meta: dict) -> str:
+    diagnostics = meta.get("diagnostics") if isinstance(meta, dict) else {}
+    errors = diagnostics.get("errors") if isinstance(diagnostics, dict) else []
+    return "error" if errors else "ready"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SERVICE 4 — USERSCRIPTS (/v1/userscripts)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -146,15 +152,20 @@ async def sync_userscripts(request: Request) -> dict:
                         "name": str(entry.get("name") or parsed["name"] or script_id),
                         "version": str(entry.get("version") or parsed["version"]),
                         "description": str(entry.get("description") or parsed["description"]),
+                        "sourceUrl": str(entry.get("sourceUrl") or entry.get("installUrl") or parsed["downloadURL"] or ""),
                         "enabled": bool(entry.get("enabled", True)),
                         "matches": entry.get("matches") if isinstance(entry.get("matches"), list) else parsed["matches"],
+                        "includes": entry.get("includes") if isinstance(entry.get("includes"), list) else parsed["includes"],
                         "exclude": entry.get("exclude") if isinstance(entry.get("exclude"), list) else parsed["exclude"],
+                        "excludeMatches": entry.get("excludeMatches") if isinstance(entry.get("excludeMatches"), list) else parsed["excludeMatches"],
                         "runAt": str(entry.get("runAt") or parsed["runAt"]),
                         "requires": entry.get("requires") if isinstance(entry.get("requires"), list) else parsed["requires"],
                         "resources": entry.get("resources") if isinstance(entry.get("resources"), list) else parsed["resources"],
                         "grants": entry.get("grants") if isinstance(entry.get("grants"), list) else parsed["grants"],
                         "connects": entry.get("connects") if isinstance(entry.get("connects"), list) else parsed["connects"],
                         "noframes": bool(entry.get("noframes", parsed["noframes"])),
+                        "diagnostics": parsed.get("diagnostics", {"warnings": [], "errors": []}),
+                        "syncStatus": _userscript_sync_status(parsed),
                         "updatedAt": int(path.stat().st_mtime),
                         "code": code,
                     })
@@ -175,15 +186,20 @@ async def sync_userscripts(request: Request) -> dict:
                     "name": parsed["name"] or script_id,
                     "version": parsed["version"],
                     "description": parsed["description"],
+                    "sourceUrl": parsed["downloadURL"],
                     "enabled": True,
                     "matches": parsed["matches"],
+                    "includes": parsed["includes"],
                     "exclude": parsed["exclude"],
+                    "excludeMatches": parsed["excludeMatches"],
                     "runAt": parsed["runAt"],
                     "requires": parsed["requires"],
                     "resources": parsed["resources"],
                     "grants": parsed["grants"],
                     "connects": parsed["connects"],
                     "noframes": parsed["noframes"],
+                    "diagnostics": parsed.get("diagnostics", {"warnings": [], "errors": []}),
+                    "syncStatus": _userscript_sync_status(parsed),
                     "updatedAt": int(filepath.stat().st_mtime),
                     "code": code,
                 })

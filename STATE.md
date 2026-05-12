@@ -1,35 +1,31 @@
-# STATE.md — Sprint 2: Remaining Items
+# STATE.md - MCQ Stability And Deployment Plan
 
 ## Status
-**COMPLETE** — All 33 tasks across 4 phases finished.
+PLANNED
 
-## Sprint 2 Progress
-| Phase | Tasks | Done |
-|-------|-------|------|
-| Phase 1: Trivial | 8 | ✅ 8/8 |
-| Phase 2: Backend Low-Risk | 12 | ✅ 12/12 |
-| Phase 3: Extension Low-Risk | 6 | ✅ 6/6 |
-| Phase 4: Medium-Risk | 7 | ✅ 7/7 |
-| **Total** | **33** | **33/33** |
+## Active Task
+Analyzed requested bug/improvement list and produced a phased implementation plan.
 
-## Combined Progress (Both Sprints)
-| Sprint | Tasks | Status |
-|--------|-------|--------|
-| Sprint 1 (Safe Bug Fixes) | 28 | ✅ Complete |
-| Sprint 2 (Remaining Items) | 33 | ✅ Complete |
-| **Total** | **61** | **✅ Complete** |
+## Last Files Modified
+- `TASK.md`
+- `STATE.md`
+- `tmp/mcq_stability_scaling_plan.md`
 
-## Phase 4 Files Changed
-| Task | File | Change |
-|------|------|--------|
-| T27 | `exam_service.py` | Persistent ThreadPoolExecutor in __init__, reused across requests |
-| T28 | `backup_service.py` | Replaced `shutil.copy2` with atomic `sqlite3.backup()` API |
-| T29 | `backup_service.py` | Added doc warning + `sqlite3.backup()` for restore too |
-| T30 | `onnx_model.py` | Fixed CTC layout: explicit shape[0]!=1 check for time-first |
-| T31 | `telegram_bot.py` | Added JSON file persistence for _user_states with 30-min timeout |
-| T32 | `models.py` | `field_name` from form now used (falls back to default if empty) |
-| T33 | `config.yaml` | Added comment about relative path requirements |
+## Last Command Run
+Targeted code inspection across MCQ learning, captcha, vcam, STALL, Docker, Telegram, API keys, and backup modules.
 
-## Verification
-- `python3 -m compileall -q backend/` — zero errors ✅
-- `npm run build` (frontend) — 1742 modules, 2.49s, zero errors ✅
+## Last Output/Error
+Plan saved to `tmp/mcq_stability_scaling_plan.md`.
+
+## Key Findings
+- Learned pHash is unsafe because confidence/confirmation gates are too low and pHash distance is too broad.
+- Captcha fill speed is limited by human typing delays.
+- VCAM is injected/enabled too broadly and can keep canvas/capture timers alive.
+- Docker extension download likely fails because `extension/` is missing from the image.
+- Telegram bot is not production-wired for Docker and `python-telegram-bot` is missing from requirements.
+- API key create can create a key but fail before frontend receives the plain key.
+- Protected STALL step payloads should be server-only, fetched on demand, executed, and wiped.
+- Extension logout/API-key removal should wipe server-synced data and cached payloads.
+
+## Immediate Next Step
+Commit and push the current source/plan state to `sa_helper/before-scale` before implementation changes.

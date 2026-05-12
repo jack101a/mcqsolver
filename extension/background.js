@@ -3,6 +3,8 @@
 // Routes/locators are synced from backend every 5 min automatically — no manual refresh needed.
 
 
+const gmXhrControllers = new Map();
+
 async function handleGMCall(msg) {
     const { action, key, value, defaultValue, details, requestId, scriptId } = msg;
     const ns = String(scriptId || 'global');
@@ -34,33 +36,91 @@ async function handleGMCall(msg) {
         const data = await storageGet([storageKey]);
         return { requestId, values: Object.keys(data[storageKey] || {}) };
     }
+
+    if (action === 'addValueChangeListener' || action === 'removeValueChangeListener') {
+        return { requestId, ok: true };
+    }
     
     if (action === 'xmlhttpRequest') {
+        let xhrId = requestId;
+        let timeoutId = null;
+        let didTimeout = false;
         try {
             const cleanDetails = details || {};
             const allowed = await isUserscriptConnectAllowed(ns, cleanDetails.url);
             if (!allowed) return { requestId, error: `@connect blocked: ${cleanDetails.url}` };
+            xhrId = cleanDetails.xhrId || requestId;
+            const controller = new AbortController();
+            gmXhrControllers.set(xhrId, controller);
+            if (cleanDetails.timeout && Number(cleanDetails.timeout) > 0) {
+                timeoutId = setTimeout(() => {
+                    didTimeout = true;
+                    controller.abort();
+                }, Number(cleanDetails.timeout));
+            }
             const response = await fetch(cleanDetails.url, {
                 method: cleanDetails.method || 'GET',
                 headers: cleanDetails.headers || {},
                 body: cleanDetails.data || null,
                 credentials: cleanDetails.anonymous ? 'omit' : 'include',
+                signal: controller.signal,
             });
-            const responseText = await response.text();
+            const responseType = String(cleanDetails.responseType || 'text').toLowerCase();
+            const responseText = responseType === 'arraybuffer' || responseType === 'blob'
+                ? ''
+                : await response.clone().text();
+            let responseBody = responseText;
+            if (responseType === 'json') {
+                try { responseBody = responseText ? JSON.parse(responseText) : null; } catch (_) { responseBody = null; }
+            } else if (responseType === 'arraybuffer') {
+                const buf = await response.arrayBuffer();
+                const bytes = Array.from(new Uint8Array(buf));
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                responseBody = btoa(binary);
+            } else if (responseType === 'blob') {
+                const blob = await response.blob();
+                const buf = await blob.arrayBuffer();
+                const bytes = Array.from(new Uint8Array(buf));
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                responseBody = `data:${blob.type || 'application/octet-stream'};base64,${btoa(binary)}`;
+            }
+            if (timeoutId) clearTimeout(timeoutId);
+            gmXhrControllers.delete(xhrId);
             return { 
                 requestId, 
                 response: {
+                    readyState: 4,
                     status: response.status,
                     statusText: response.statusText,
                     finalUrl: response.url,
                     responseText,
-                    response: responseText,
+                    response: responseBody,
+                    responseType,
                     responseHeaders: Array.from(response.headers.entries()).map(([k, v]) => `${k}: ${v}`).join('\r\n')
                 } 
             };
         } catch (e) {
-            return { requestId, error: e.message };
+            if (timeoutId) clearTimeout(timeoutId);
+            gmXhrControllers.delete(xhrId);
+            return {
+                requestId,
+                aborted: e?.name === 'AbortError' && !didTimeout,
+                timedOut: didTimeout,
+                error: didTimeout ? 'timeout' : (e.message || String(e))
+            };
         }
+    }
+
+    if (action === 'xmlhttpAbort') {
+        const xhrId = details?.xhrId || key;
+        const controller = gmXhrControllers.get(xhrId);
+        if (controller) {
+            controller.abort('abort');
+            gmXhrControllers.delete(xhrId);
+        }
+        return { requestId, ok: true };
     }
 
     if (action === 'notification') {
@@ -76,6 +136,56 @@ async function handleGMCall(msg) {
             return { requestId, ok: true };
         }
         return { requestId, ok: false, error: 'notifications API unavailable' };
+    }
+
+    if (action === 'openInTab') {
+        const url = typeof details === 'string' ? details : details?.url;
+        if (!url) return { requestId, error: 'No URL provided' };
+        return new Promise(resolve => {
+            chrome.tabs.create({ url, active: details?.active !== false }, tab => {
+                if (chrome.runtime.lastError) resolve({ requestId, error: chrome.runtime.lastError.message });
+                else resolve({ requestId, ok: true, tabId: tab?.id });
+            });
+        });
+    }
+
+    if (action === 'download') {
+        const opts = typeof details === 'string' ? { url: details } : { ...(details || {}) };
+        if (!opts.url) return { requestId, error: 'No download URL provided' };
+        return new Promise(resolve => {
+            chrome.downloads.download({
+                url: opts.url,
+                filename: opts.name || opts.filename,
+                saveAs: !!opts.saveAs
+            }, downloadId => {
+                if (chrome.runtime.lastError) resolve({ requestId, error: chrome.runtime.lastError.message });
+                else resolve({ requestId, ok: true, downloadId });
+            });
+        });
+    }
+
+    if (action === 'registerMenuCommand') {
+        const data = await storageGet([`userscript_menu_commands:${ns}`]);
+        const menuKey = `userscript_menu_commands:${ns}`;
+        const commands = data[menuKey] || {};
+        const id = details?.id || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        commands[id] = { id, text: String(details?.text || ''), registeredAt: Date.now() };
+        await storageSet({ [menuKey]: commands });
+        return { requestId, ok: true, id };
+    }
+
+    if (action === 'unregisterMenuCommand') {
+        const menuKey = `userscript_menu_commands:${ns}`;
+        const data = await storageGet([menuKey]);
+        const commands = data[menuKey] || {};
+        delete commands[details?.id || details?.key || key];
+        await storageSet({ [menuKey]: commands });
+        return { requestId, ok: true };
+    }
+
+    if (action === 'log') {
+        console.log(`[Userscript:${ns}]`, ...(Array.isArray(details?.args) ? details.args : [details]));
+        return { requestId, ok: true };
     }
     
     return { requestId, error: 'Unknown GM action' };
@@ -104,7 +214,9 @@ async function isUserscriptConnectAllowed(scriptId, targetUrl) {
 function parseUserscript(code) {
     const meta = {
         matches: [],
+        includes: [],
         exclude: [],
+        excludeMatches: [],
         requires: [],
         resources: [],
         grants: [],
@@ -113,7 +225,11 @@ function parseUserscript(code) {
         runAt: 'document-idle',
         name: 'Unnamed',
         version: '0.0',
-        description: ''
+        description: '',
+        namespace: '',
+        icon: '',
+        downloadURL: '',
+        updateURL: ''
     };
     const match = code.match(/\/\/\s*==UserScript==([\s\S]*?)\/\/\s*==\/UserScript==/);
     if (match) {
@@ -123,8 +239,10 @@ function parseUserscript(code) {
             if (m) {
                 const key = m[1].trim().toLowerCase();
                 const val = m[2].trim();
-                if (key === 'match' || key === 'include') meta.matches.push(val);
+                if (key === 'match') meta.matches.push(val);
+                else if (key === 'include') meta.includes.push(val);
                 else if (key === 'exclude') meta.exclude.push(val);
+                else if (key === 'exclude-match') meta.excludeMatches.push(val);
                 else if (key === 'require') meta.requires.push(val);
                 else if (key === 'resource') {
                     const parts = val.split(/\s+/, 2);
@@ -135,8 +253,12 @@ function parseUserscript(code) {
                 else if (key === 'noframes') meta.noframes = true;
                 else if (key === 'run-at') meta.runAt = val;
                 else if (key === 'name') meta.name = val;
+                else if (key === 'namespace') meta.namespace = val;
                 else if (key === 'version') meta.version = val;
                 else if (key === 'description') meta.description = val;
+                else if (key === 'icon') meta.icon = val;
+                else if (key === 'downloadurl') meta.downloadURL = val;
+                else if (key === 'updateurl') meta.updateURL = val;
             }
         }
     }
@@ -504,22 +626,41 @@ async function appendUserscriptLog(entry) {
     await storageSet({ userscript_logs: logs.slice(0, 200) });
 }
 
-async function fetchUserscriptDependency(url) {
-    const cleanUrl = String(url || '').trim();
-    if (!/^https?:\/\//i.test(cleanUrl)) return { url: cleanUrl, ok: false, code: '', error: 'Only http(s) @require URLs are supported' };
+function resolveUserscriptUrl(url, baseUrl) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    if (/^(https?|data):/i.test(raw)) return raw;
+    if (!baseUrl) return raw;
+    try {
+        return new URL(raw, baseUrl).href;
+    } catch (_) {
+        return raw;
+    }
+}
+
+async function fetchUserscriptDependency(url, baseUrl) {
+    const cleanUrl = resolveUserscriptUrl(url, baseUrl);
+    if (!/^(https?|data):/i.test(cleanUrl)) return { url: cleanUrl, ok: false, code: '', error: 'Only http(s), data:, or base-resolved @require URLs are supported' };
+    const cacheKey = `userscript_require:${cleanUrl}`;
+    const cached = await storageGet([cacheKey]);
+    if (cached[cacheKey]?.code) return { url: cleanUrl, ok: true, code: cached[cacheKey].code, error: '', cached: true };
     try {
         const resp = await fetch(cleanUrl, { credentials: 'omit' });
         if (!resp.ok) return { url: cleanUrl, ok: false, code: '', error: `HTTP ${resp.status}` };
         const code = await resp.text();
+        await storageSet({ [cacheKey]: { code, fetchedAt: Date.now(), contentType: resp.headers.get('content-type') || '' } });
         return { url: cleanUrl, ok: true, code, error: '' };
     } catch (e) {
         return { url: cleanUrl, ok: false, code: '', error: e.message };
     }
 }
 
-async function fetchUserscriptResource(resource) {
-    const url = String(resource?.url || '').trim();
-    if (!/^https?:\/\//i.test(url)) return { ...resource, ok: false, text: '', dataUrl: '', error: 'Only http(s) @resource URLs are supported' };
+async function fetchUserscriptResource(resource, baseUrl) {
+    const url = resolveUserscriptUrl(resource?.url, baseUrl);
+    if (!/^(https?|data):/i.test(url)) return { ...resource, url, ok: false, text: '', dataUrl: '', error: 'Only http(s), data:, or base-resolved @resource URLs are supported' };
+    const cacheKey = `userscript_resource:${url}`;
+    const cached = await storageGet([cacheKey]);
+    if (cached[cacheKey]?.dataUrl) return { ...resource, url, ok: true, text: cached[cacheKey].text || '', dataUrl: cached[cacheKey].dataUrl, error: '', cached: true };
     try {
         const resp = await fetch(url, { credentials: 'omit' });
         if (!resp.ok) return { ...resource, ok: false, text: '', dataUrl: '', error: `HTTP ${resp.status}` };
@@ -530,6 +671,7 @@ async function fetchUserscriptResource(resource) {
         for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
         const text = new TextDecoder().decode(new Uint8Array(buffer));
         const dataUrl = `data:${contentType};base64,${btoa(binary)}`;
+        await storageSet({ [cacheKey]: { text, dataUrl, fetchedAt: Date.now(), contentType } });
         return { ...resource, ok: true, text, dataUrl, error: '' };
     } catch (e) {
         return { ...resource, ok: false, text: '', dataUrl: '', error: e.message };
@@ -538,18 +680,19 @@ async function fetchUserscriptResource(resource) {
 
 async function bundleUserscript(script) {
     const parsedMeta = parseUserscript(script.code || '');
+    const sourceUrl = script.sourceUrl || script.installUrl || script.url || script.downloadURL || parsedMeta.downloadURL || '';
     const requires = Array.isArray(script.requires) && script.requires.length ? script.requires : parsedMeta.requires;
     const bundledRequires = [];
     const bundledResources = [];
     const requireErrors = [];
     for (const url of requires || []) {
-        const dep = await fetchUserscriptDependency(url);
+        const dep = await fetchUserscriptDependency(url, sourceUrl);
         if (dep.ok) bundledRequires.push({ url: dep.url, code: dep.code });
         else requireErrors.push({ url: dep.url, error: dep.error });
     }
     const resources = Array.isArray(script.resources) ? script.resources : parsedMeta.resources;
     for (const resource of resources || []) {
-        const fetched = await fetchUserscriptResource(resource);
+        const fetched = await fetchUserscriptResource(resource, sourceUrl);
         if (fetched.ok) bundledResources.push({
             name: fetched.name,
             url: fetched.url,
@@ -560,6 +703,7 @@ async function bundleUserscript(script) {
     }
     const runAt = script.runAt || parsedMeta.runAt || 'document-idle';
     const matches = Array.isArray(script.matches) && script.matches.length ? script.matches : parsedMeta.matches;
+    const includes = Array.isArray(script.includes) ? script.includes : parsedMeta.includes;
     return {
         id: script.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `script_${Date.now()}`),
         name: script.name || parsedMeta.name || 'Unnamed',
@@ -567,13 +711,16 @@ async function bundleUserscript(script) {
         enabled: script.enabled !== false,
         source: 'backend',
         rawCode: script.code || '',
+        sourceUrl,
         bundledRequireCode: bundledRequires.map(item => `\n/* @require ${item.url} */\n${item.code}`).join('\n'),
         bundledResources,
         requireErrors,
         parsedMeta: {
             ...parsedMeta,
-            matches: matches.length ? matches : ['<all_urls>'],
+            matches: matches.length || includes.length ? matches : ['<all_urls>'],
+            includes,
             exclude: Array.isArray(script.exclude) ? script.exclude : parsedMeta.exclude,
+            excludeMatches: Array.isArray(script.excludeMatches) ? script.excludeMatches : parsedMeta.excludeMatches,
             runAt,
             requires,
             resources,
@@ -848,6 +995,23 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
+    const valueChanges = Object.entries(changes)
+        .filter(([key]) => key.startsWith('userscript_storage:'))
+        .map(([storageKey, change]) => ({
+            type: 'USERSCRIPT_VALUE_CHANGED',
+            scriptId: storageKey.slice('userscript_storage:'.length),
+            oldValue: change.oldValue || {},
+            newValue: change.newValue || {}
+        }));
+    if (valueChanges.length) {
+        chrome.tabs.query({}, tabs => {
+            for (const tab of tabs) {
+                for (const message of valueChanges) {
+                    chrome.tabs.sendMessage(tab.id, message, () => void chrome.runtime.lastError);
+                }
+            }
+        });
+    }
     if (!changes.globalFieldRoutes && !changes.globalLocators) return;
     chrome.tabs.query({}, tabs => {
         for (const tab of tabs) {
