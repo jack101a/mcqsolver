@@ -23,6 +23,14 @@ async def api_create_key(
     requests_per_minute: int = Form(0),
     burst: int = Form(0),
     key_type: str = Form("user"),
+    plan_name: str = Form("Standard"),
+    mobile: str = Form(""),
+    telegram_id: str = Form(""),
+    service_autofill: str = Form("on"),
+    service_captcha: str = Form("on"),
+    service_stall: str = Form("on"),
+    service_solver: str = Form("on"),
+    service_custom: str = Form(""),
 ):
     denied = _admin_guard(request)
     if denied:
@@ -40,6 +48,19 @@ async def api_create_key(
                 requests_per_minute=int(requests_per_minute),
                 burst=int(burst or 0),
             )
+        container.db.set_api_key_entitlements(
+            key_id=key_id,
+            plan_name=plan_name,
+            mobile=mobile,
+            telegram_id=telegram_id,
+            services={
+                "autofill": str(service_autofill).lower() in {"1", "true", "on", "yes"},
+                "captcha": str(service_captcha).lower() in {"1", "true", "on", "yes"},
+                "stall": str(service_stall).lower() in {"1", "true", "on", "yes"},
+                "solver": str(service_solver).lower() in {"1", "true", "on", "yes"},
+                "custom": str(service_custom).lower() in {"1", "true", "on", "yes"},
+            },
+        )
     except Exception as e:
         try:
             container.key_service.revoke_key_by_id(key_id)
@@ -64,6 +85,39 @@ async def api_create_key(
         status_code=201,
         content={"ok": True, "key_id": key_id, "api_key": plain, "expires_at": expires, "warnings": warnings},
     )
+
+@router.post("/keys/entitlements/update")
+async def update_key_entitlements(
+    request: Request,
+    key_id: int = Form(...),
+    plan_name: str = Form("Standard"),
+    mobile: str = Form(""),
+    telegram_id: str = Form(""),
+    service_autofill: str = Form(""),
+    service_captcha: str = Form(""),
+    service_stall: str = Form(""),
+    service_solver: str = Form(""),
+    service_custom: str = Form(""),
+):
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    container.db.set_api_key_entitlements(
+        key_id=key_id,
+        plan_name=plan_name,
+        mobile=mobile,
+        telegram_id=telegram_id,
+        services={
+            "autofill": str(service_autofill).lower() in {"1", "true", "on", "yes"},
+            "captcha": str(service_captcha).lower() in {"1", "true", "on", "yes"},
+            "stall": str(service_stall).lower() in {"1", "true", "on", "yes"},
+            "solver": str(service_solver).lower() in {"1", "true", "on", "yes"},
+            "custom": str(service_custom).lower() in {"1", "true", "on", "yes"},
+        },
+    )
+    _write_auto_backup(container, "update_key_entitlements")
+    return JSONResponse({"ok": True})
 
 @router.post("/keys/create")
 async def create_key(request: Request, key_name: str = Form(...), expiry_days: int = Form(30), key_type: str = Form("user")):

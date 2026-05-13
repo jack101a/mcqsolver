@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from datetime import datetime, timezone
 from typing import Any
 from .base import BaseRepository
@@ -6,6 +7,26 @@ from app.core.config import get_settings
 from app.core.security import hash_api_key
 
 class APIKeyRepository(BaseRepository):
+    DEFAULT_SERVICES = {
+        "autofill": True,
+        "captcha": True,
+        "stall": True,
+        "solver": True,
+        "custom": False,
+    }
+
+    def _parse_services(self, value: str | None) -> dict[str, bool]:
+        try:
+            raw = json.loads(value or "{}")
+            if not isinstance(raw, dict):
+                raw = {}
+        except Exception:
+            raw = {}
+        services = dict(self.DEFAULT_SERVICES)
+        for key, enabled in raw.items():
+            services[str(key)] = bool(enabled)
+        return services
+
     def insert_api_key(self, name: str, key_hash: str, expires_at: str | None, key_type: str = "user") -> int:
         """Insert API key and return row id."""
         with self._lock:
@@ -145,12 +166,20 @@ class APIKeyRepository(BaseRepository):
     def get_all_api_keys(self) -> list[dict[str, Any]]:
         """Get all API keys for admin view."""
         with self.connect() as conn:
-            return [
-                dict(row)
-                for row in conn.execute(
-                    "SELECT id, name, key_type, enabled, all_domains, created_at, expires_at, revoked_at FROM api_keys ORDER BY id DESC"
-                )
-            ]
+            rows = []
+            for row in conn.execute(
+                """
+                SELECT id, name, key_type, enabled, all_domains, created_at, expires_at, revoked_at,
+                       plan_name, mobile, telegram_id, services_json
+                FROM api_keys
+                ORDER BY id DESC
+                """
+            ):
+                item = dict(row)
+                item["services"] = self._parse_services(item.get("services_json"))
+                item.pop("services_json", None)
+                rows.append(item)
+            return rows
 
     def set_api_key_domain_scope(self, key_id: int, all_domains: bool, domains: list[str] | None = None) -> None:
         clean_domains = sorted({self._normalize_domain(d) for d in (domains or []) if self._normalize_domain(d)})
@@ -218,6 +247,59 @@ class APIKeyRepository(BaseRepository):
             return {
                 "requests_per_minute": int(row["requests_per_minute"]),
                 "burst": int(row["burst"]),
+            }
+
+    def set_api_key_entitlements(
+        self,
+        key_id: int,
+        plan_name: str = "",
+        mobile: str = "",
+        telegram_id: str = "",
+        services: dict[str, bool] | None = None,
+    ) -> None:
+        clean_services = dict(self.DEFAULT_SERVICES)
+        for name, enabled in (services or {}).items():
+            clean_services[str(name)] = bool(enabled)
+        with self._lock:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE api_keys
+                    SET plan_name = ?, mobile = ?, telegram_id = ?, services_json = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        str(plan_name or "Standard").strip() or "Standard",
+                        str(mobile or "").strip(),
+                        str(telegram_id or "").strip(),
+                        json.dumps(clean_services, separators=(",", ":")),
+                        key_id,
+                    ),
+                )
+                conn.commit()
+
+    def get_api_key_entitlements(self, key_id: int) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT plan_name, mobile, telegram_id, services_json
+                FROM api_keys
+                WHERE id = ?
+                """,
+                (key_id,),
+            ).fetchone()
+            if not row:
+                return {
+                    "plan_name": "Standard",
+                    "mobile": "",
+                    "telegram_id": "",
+                    "services": dict(self.DEFAULT_SERVICES),
+                }
+            return {
+                "plan_name": row["plan_name"] or "Standard",
+                "mobile": row["mobile"] or "",
+                "telegram_id": row["telegram_id"] or "",
+                "services": self._parse_services(row["services_json"]),
             }
 
     def validate_or_bind_key_device(

@@ -150,6 +150,26 @@ export function KeysPanel({
                 <label className={`text-xs ${t_textMuted}`}>Burst (extra requests/min)</label>
                 <input type="number" name="burst" defaultValue="10" min="0" className={glassInput} title="Per-key burst" />
               </div>
+              <div>
+                <label className={`text-xs ${t_textMuted}`}>Plan</label>
+                <input type="text" name="plan_name" defaultValue="Standard" className={glassInput} title="Plan name" />
+              </div>
+              <div>
+                <label className={`text-xs ${t_textMuted}`}>Mobile</label>
+                <input type="text" name="mobile" className={glassInput} title="User mobile" />
+              </div>
+              <div>
+                <label className={`text-xs ${t_textMuted}`}>Telegram ID</label>
+                <input type="text" name="telegram_id" className={glassInput} title="Telegram ID" />
+              </div>
+              <div className={`sm:col-span-2 grid grid-cols-2 sm:grid-cols-5 gap-2 rounded-xl border p-2 ${t_borderLight}`}>
+                {["autofill", "captcha", "stall", "solver", "custom"].map((svc) => (
+                  <label key={svc} className={`flex items-center gap-2 text-xs capitalize ${t_textMuted}`}>
+                    <input type="checkbox" name={`service_${svc}`} defaultChecked={svc !== "custom"} />
+                    {svc}
+                  </label>
+                ))}
+              </div>
             </div>
             <button
               type="submit"

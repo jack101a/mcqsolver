@@ -24,6 +24,7 @@ export function SettingsPanel({
   handleSaveKeyAccessSettings,
   handleAddSettingsCustomDomain,
   handleSaveKeyRateLimitSettings,
+  handleSaveKeyEntitlementsSettings,
   handleCreateBackupNow,
   handleRestoreLatestBackup,
   handleExportMasterSetup,
@@ -44,6 +45,8 @@ export function SettingsPanel({
   const [telegramStatus, setTelegramStatus] = useState(null);
   const [telegramSaving, setTelegramSaving] = useState(false);
   const [telegramTesting, setTelegramTesting] = useState(false);
+  const selectedKey = apiKeys.find(k => String(k.id) === String(settingsKeyId));
+  const selectedServices = selectedKey?.services || {};
 
   useEffect(() => {
     apiGet("/admin/api/settings/telegram.bot_token")
@@ -385,6 +388,42 @@ export function SettingsPanel({
         </div>
       </div>
 
+      <div className={`rounded-2xl p-6 transition-colors duration-500 ${glassPanel}`}>
+        <h3 className={`text-base font-semibold mb-4 ${t_textHeading}`}>Key User Info And Services</h3>
+        <form key={`ent-${settingsKeyId}`} onSubmit={handleSaveKeyEntitlementsSettings} className="space-y-4">
+          <div>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>Select API Key</label>
+            <select className={glassInput} value={settingsKeyId} onChange={(e) => handleSettingsKeyChange(e.target.value)}>
+              <option value="" disabled>Select API key</option>
+              {apiKeys.map((k) => <option key={k.id} value={k.id}>{k.name} (#{k.id})</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className={`text-xs block mb-1 ${t_textMuted}`}>Plan</label>
+              <input name="plan_name" className={glassInput} defaultValue={selectedKey?.plan_name || "Standard"} />
+            </div>
+            <div>
+              <label className={`text-xs block mb-1 ${t_textMuted}`}>Mobile</label>
+              <input name="mobile" className={glassInput} defaultValue={selectedKey?.mobile || ""} />
+            </div>
+            <div>
+              <label className={`text-xs block mb-1 ${t_textMuted}`}>Telegram ID</label>
+              <input name="telegram_id" className={glassInput} defaultValue={selectedKey?.telegram_id || ""} />
+            </div>
+          </div>
+          <div className={`grid grid-cols-2 sm:grid-cols-5 gap-3 rounded-xl border p-3 ${t_borderLight}`}>
+            {["autofill", "captcha", "stall", "solver", "custom"].map((svc) => (
+              <label key={svc} className={`flex items-center gap-2 text-xs capitalize ${t_textMuted}`}>
+                <input type="checkbox" name={`service_${svc}`} defaultChecked={selectedServices[svc] !== false && (svc !== "custom" || selectedServices[svc] === true)} />
+                {svc}
+              </label>
+            ))}
+          </div>
+          <button type="submit" className={glassButton}>Update User Services</button>
+        </form>
+      </div>
+
       {/* Backups Section */}
       <div className={`rounded-2xl p-6 transition-colors duration-500 ${glassPanel}`}>
         <h3 className={`text-base font-semibold mb-4 ${t_textHeading}`}>Data Resilience</h3>
@@ -422,6 +461,7 @@ export function SettingsPanel({
                 <th className="pb-3 font-medium">Key Identity</th>
                 <th className="pb-3 font-medium">Domain Scope</th>
                 <th className="pb-3 font-medium">Rate Limit</th>
+                <th className="pb-3 font-medium">Services</th>
                 <th className="pb-3 font-medium text-right">Device Lock</th>
               </tr>
             </thead>
@@ -444,6 +484,12 @@ export function SettingsPanel({
                   <td className="py-4 text-xs">
                     <div className={t_textHeading}>{(k.rate_limit?.requests_per_minute || 60)} RPM</div>
                     <div className={`text-[10px] ${t_textMuted}`}>Burst: {(k.rate_limit?.burst || 10)}</div>
+                  </td>
+                  <td className="py-4 text-xs">
+                    <div className={`max-w-[260px] ${t_textMuted}`}>
+                      {Object.entries(k.services || {}).filter(([, enabled]) => enabled).map(([name]) => name).join(", ") || "No services"}
+                    </div>
+                    <div className={`text-[10px] ${t_textMuted}`}>{k.plan_name || "Standard"} {k.mobile ? `- ${k.mobile}` : ""}</div>
                   </td>
                   <td className="py-4 text-xs text-right">
                     {k.device_binding?.device_id ? (
@@ -616,6 +662,7 @@ SettingsPanel.propTypes = {
   handleSaveKeyAccessSettings: PropTypes.func.isRequired,
   handleAddSettingsCustomDomain: PropTypes.func.isRequired,
   handleSaveKeyRateLimitSettings: PropTypes.func.isRequired,
+  handleSaveKeyEntitlementsSettings: PropTypes.func.isRequired,
   handleCreateBackupNow: PropTypes.func.isRequired,
   handleRestoreLatestBackup: PropTypes.func.isRequired,
   handleExportMasterSetup: PropTypes.func.isRequired,

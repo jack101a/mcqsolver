@@ -1023,10 +1023,18 @@ chrome.alarms.onAlarm.addListener(alarm => {
         syncAll('alarm');
         // Periodic verification to keep isMaster/expiresAt fresh
         apiGet('/v1/auth/verify').then(d => {
+            const services = d.enabled_services || d.services || {};
             chrome.storage.local.set({
                 isMaster: !!d.is_master,
                 keyName: d.key_name || '',
                 expiresAt: d.expires_at || null,
+                planName: d.plan_name || d.plan || '',
+                mobile: d.mobile || d.phone || '',
+                telegramId: d.telegram_id || d.tg_id || '',
+                enabledServices: services,
+                autofillEnabled: services.autofill !== false,
+                captchaEnabled: services.captcha !== false,
+                solverEnabled: services.stall !== false && services.solver !== false,
                 lastVerify: Date.now()
             });
         }).catch(() => {});
@@ -1180,6 +1188,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         promise
             .then(d => {
+                const services = d.enabled_services || d.services || d.subscribed_services || {};
                 // Persist metadata so popup/options can detect Master Mode vs User Mode
                 chrome.storage.local.set({
                     isMaster: !!d.is_master,
@@ -1189,7 +1198,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     planName: d.plan_name || d.plan || d.subscription_plan || '',
                     mobile: d.mobile || d.phone || d.mobile_no || '',
                     telegramId: d.telegram_id || d.tg_id || '',
-                    enabledServices: d.enabled_services || d.services || d.subscribed_services || [],
+                    enabledServices: services,
+                    autofillEnabled: services.autofill !== false,
+                    captchaEnabled: services.captcha !== false,
+                    solverEnabled: services.stall !== false && services.solver !== false,
                     lastVerify: Date.now()
                 });
                 sendResponse({ ok: true, data: d });

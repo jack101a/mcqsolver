@@ -62,6 +62,14 @@ export function useKeyHandlers({
       requests_per_minute: Number(fd.get("requests_per_minute") || 0),
       burst: Number(fd.get("burst") || 0),
       key_type: fd.get("key_type") || "user",
+      plan_name: fd.get("plan_name") || "Standard",
+      mobile: fd.get("mobile") || "",
+      telegram_id: fd.get("telegram_id") || "",
+      service_autofill: fd.get("service_autofill") ? "on" : "",
+      service_captcha: fd.get("service_captcha") ? "on" : "",
+      service_stall: fd.get("service_stall") ? "on" : "",
+      service_solver: fd.get("service_solver") ? "on" : "",
+      service_custom: fd.get("service_custom") ? "on" : "",
     });
   };
 

@@ -346,6 +346,14 @@ class Database:
                     conn.execute("ALTER TABLE api_keys ADD COLUMN all_domains INTEGER NOT NULL DEFAULT 1")
                 if "key_type" not in key_columns:
                     conn.execute("ALTER TABLE api_keys ADD COLUMN key_type TEXT NOT NULL DEFAULT 'user'")
+                if "plan_name" not in key_columns:
+                    conn.execute("ALTER TABLE api_keys ADD COLUMN plan_name TEXT NOT NULL DEFAULT 'Standard'")
+                if "mobile" not in key_columns:
+                    conn.execute("ALTER TABLE api_keys ADD COLUMN mobile TEXT NOT NULL DEFAULT ''")
+                if "telegram_id" not in key_columns:
+                    conn.execute("ALTER TABLE api_keys ADD COLUMN telegram_id TEXT NOT NULL DEFAULT ''")
+                if "services_json" not in key_columns:
+                    conn.execute("ALTER TABLE api_keys ADD COLUMN services_json TEXT NOT NULL DEFAULT '{\"autofill\":true,\"captcha\":true,\"stall\":true,\"solver\":true,\"custom\":false}'")
 
                 route_columns = {row["name"] for row in conn.execute("PRAGMA table_info(model_routes)")}
                 if "model_filename" in route_columns and "ai_model_filename" not in route_columns:
@@ -437,6 +445,8 @@ class Database:
     def is_domain_allowed_for_key(self, *args, **kwargs): return self.api_keys.is_domain_allowed_for_key(*args, **kwargs)
     def set_api_key_rate_limit(self, *args, **kwargs): return self.api_keys.set_api_key_rate_limit(*args, **kwargs)
     def get_api_key_rate_limit(self, *args, **kwargs): return self.api_keys.get_api_key_rate_limit(*args, **kwargs)
+    def set_api_key_entitlements(self, *args, **kwargs): return self.api_keys.set_api_key_entitlements(*args, **kwargs)
+    def get_api_key_entitlements(self, *args, **kwargs): return self.api_keys.get_api_key_entitlements(*args, **kwargs)
     def validate_or_bind_key_device(self, *args, **kwargs): return self.api_keys.validate_or_bind_key_device(*args, **kwargs)
     def get_api_key_device_binding(self, *args, **kwargs): return self.api_keys.get_api_key_device_binding(*args, **kwargs)
     def ensure_master_key(self, *args, **kwargs): return self.api_keys.ensure_master_key(*args, **kwargs)

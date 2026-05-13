@@ -58,6 +58,29 @@ export function useSettingsHandlers({
     saveKeyRateLimit.mutate();
   };
 
+  const saveKeyEntitlements = useMutation({
+    mutationFn: (payload) => apiPost("/admin/keys/entitlements/update", payload),
+    onSuccess: () => { invalidate(); showToast("Key services updated."); },
+    onError: () => showToast("Failed to update key services", "error"),
+  });
+
+  const handleSaveKeyEntitlementsSettings = (e) => {
+    e.preventDefault();
+    if (!settingsKeyId) return;
+    const fd = new FormData(e.target);
+    saveKeyEntitlements.mutate({
+      key_id: Number(settingsKeyId),
+      plan_name: fd.get("plan_name") || "Standard",
+      mobile: fd.get("mobile") || "",
+      telegram_id: fd.get("telegram_id") || "",
+      service_autofill: fd.get("service_autofill") ? "on" : "",
+      service_captcha: fd.get("service_captcha") ? "on" : "",
+      service_stall: fd.get("service_stall") ? "on" : "",
+      service_solver: fd.get("service_solver") ? "on" : "",
+      service_custom: fd.get("service_custom") ? "on" : "",
+    });
+  };
+
   const toggleSettingsDomainSelection = (domain) => {
     setSettingsDomainSelections(prev =>
       prev.includes(domain) ? prev.filter(d => d !== domain) : [...prev, domain]
@@ -211,6 +234,7 @@ export function useSettingsHandlers({
 
   return {
     handleSettingsKeyChange, handleSaveKeyAccessSettings, handleSaveKeyRateLimitSettings,
+    handleSaveKeyEntitlementsSettings,
     toggleSettingsDomainSelection, handleAddSettingsCustomDomain,
     handleToggleGlobalAccess, handleAddDomain, handleRemoveDomain,
     handleCreateBackupNow, handleCloudBackupPush, handleCloudBackupPull,

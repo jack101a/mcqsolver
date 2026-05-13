@@ -157,6 +157,11 @@ class VerifyResponse(BaseModel):
     key_name: str
     expires_at: str | None
     is_master: bool = False
+    plan_name: str = "Standard"
+    mobile: str = ""
+    telegram_id: str = ""
+    enabled_services: dict[str, bool] = Field(default_factory=dict)
+    rate_limit: dict[str, int] | None = None
 
 
 class KeyCreateRequest(BaseModel):

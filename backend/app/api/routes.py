@@ -651,11 +651,17 @@ async def verify(request: Request) -> VerifyResponse:
     container  = request.app.state.container
     key_hash   = key_record.get("key_hash", "")
     is_master  = container.db.is_master_key_hash(key_hash)
+    entitlements = container.db.get_api_key_entitlements(int(key_record["id"]))
     return VerifyResponse(
         valid=True,
         key_name=str(key_record["name"]),
         expires_at=key_record["expires_at"],
         is_master=is_master,
+        plan_name=str(entitlements.get("plan_name") or "Standard"),
+        mobile=str(entitlements.get("mobile") or ""),
+        telegram_id=str(entitlements.get("telegram_id") or ""),
+        enabled_services=entitlements.get("services") or {},
+        rate_limit=container.db.get_api_key_rate_limit(int(key_record["id"])),
     )
 
 
