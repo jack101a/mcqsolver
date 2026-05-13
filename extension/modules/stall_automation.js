@@ -10,10 +10,17 @@
         }
     });
 
+    const STEP4_STARTED_KEY = '_stall_step4_started_at';
+    const STEP4_LOCK_KEY = '_stall_step4_lock_at';
+    const STEP4_DONE_KEY = '_stall_step4_done_at';
+    const STEP4_FALLBACK_DELAY_MS = 5000;
+    const STEP4_LOCK_TTL_MS = 20000;
+
     window.StallAutomation = {
         _timerId: null,
         _busy: false,
         _manualBusy: false,
+        _step4Executing: false,
         _finishing: false,
         _lastActionAt: {},
         _loadStartedAt: 0,
@@ -31,6 +38,26 @@
                 }
             })();`;
             return sendMessage({ type: 'SP_EXEC', code });
+        },
+
+        async retry(label, fn, attempts = 3) {
+            let lastResp = null;
+            let lastErr = null;
+            for (let i = 1; i <= attempts; i++) {
+                try {
+                    const resp = await fn();
+                    if (resp?.ok !== false) return resp;
+                    lastResp = resp;
+                    lastErr = resp?.error || 'unknown error';
+                } catch (e) {
+                    lastErr = e?.message || String(e);
+                }
+                if (i < attempts) {
+                    console.warn(`[Automation] ${label} failed (${i}/${attempts}):`, lastErr);
+                    await this.sleep(400 * i);
+                }
+            }
+            return lastResp || { ok: false, error: lastErr || `${label} failed` };
         },
 
         findInput(selectors) {
@@ -153,6 +180,7 @@
                     _stall_appNo: fields.appNo,
                     _stall_captcha: fields.captcha
                 });
+                await chrome.storage.local.remove([STEP4_STARTED_KEY, STEP4_LOCK_KEY, STEP4_DONE_KEY]);
 
                 if (btn) {
                     btn.disabled = true;
@@ -165,6 +193,7 @@
                 await this.executePayload('step3');
 
                 this.setStartNowStatus('Waiting 5 seconds for Step 4...', 'ok');
+                await chrome.storage.local.set({ [STEP4_STARTED_KEY]: Date.now() });
                 await sendMessage({ type: 'UPDATE_STALL_STEP', step: 4 });
             } catch (e) {
                 console.error('[Automation] Start Now error:', e);
@@ -181,50 +210,99 @@
         },
 
         async executePayload(stepId) {
-            const resp = await sendMessage({ type: 'FETCH_STALL_PAYLOAD', stepId });
+            const resp = await this.retry(`fetch ${stepId}`, () => sendMessage({ type: 'FETCH_STALL_PAYLOAD', stepId }));
             if (resp?.ok && resp.payload) {
-                await this.captureStepInputs();
-                // Get saved credentials from storage
-                const data = await chrome.storage.local.get(['_stall_appNo', '_stall_captcha']);
-                const appNo = data._stall_appNo || '';
-                const captcha = data._stall_captcha || '';
-                const appNoLiteral = JSON.stringify(appNo);
-                const captchaLiteral = JSON.stringify(captcha);
-                
-                const wrappedPayload = `(function(){
-                    try {
-                        var appNo = ${appNoLiteral};
-                        var captcha = ${captchaLiteral};
-                        var ensureField = function(name, id, value) {
-                            var el = document.querySelector('[name="' + name + '"]') || (id ? document.getElementById(id) : null);
-                            if (!el) {
-                                el = document.createElement('input');
-                                el.type = 'hidden';
-                                el.name = name;
-                                if (id) el.id = id;
-                                (document.body || document.documentElement).appendChild(el);
+                let payload = String(resp.payload || '');
+                let wrappedPayload = '';
+                try {
+                    await this.captureStepInputs();
+                    // Get saved credentials from storage
+                    const data = await chrome.storage.local.get(['_stall_appNo', '_stall_captcha']);
+                    const appNo = data._stall_appNo || '';
+                    const captcha = data._stall_captcha || '';
+                    const appNoLiteral = JSON.stringify(appNo);
+                    const captchaLiteral = JSON.stringify(captcha);
+                    
+                    wrappedPayload = `(function(){
+                        try {
+                            var appNo = ${appNoLiteral};
+                            var captcha = ${captchaLiteral};
+                            var ensureField = function(name, id, value) {
+                                var el = document.querySelector('[name="' + name + '"]') || (id ? document.getElementById(id) : null);
+                                if (!el) {
+                                    el = document.createElement('input');
+                                    el.type = 'hidden';
+                                    el.name = name;
+                                    if (id) el.id = id;
+                                    (document.body || document.documentElement).appendChild(el);
+                                }
+                                if (value) {
+                                    el.value = value;
+                                    el.setAttribute('value', value);
+                                    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+                                    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
+                                }
+                                return el;
+                            };
+                            ensureField('llappln', 'llappln', appNo);
+                            ensureField('entcaptxt', 'entcaptxt', captcha);
+                            var visibleCaptcha = document.getElementById('txtCaptcha');
+                            if (visibleCaptcha && captcha) {
+                                visibleCaptcha.value = captcha;
+                                visibleCaptcha.setAttribute('value', captcha);
                             }
-                            if (value) {
-                                el.value = value;
-                                el.setAttribute('value', value);
-                                try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-                                try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
-                            }
-                            return el;
-                        };
-                        ensureField('llappln', 'llappln', appNo);
-                        ensureField('entcaptxt', 'entcaptxt', captcha);
-                        var visibleCaptcha = document.getElementById('txtCaptcha');
-                        if (visibleCaptcha && captcha) {
-                            visibleCaptcha.value = captcha;
-                            visibleCaptcha.setAttribute('value', captcha);
-                        }
-                        ${resp.payload}
-                    } catch (e) { console.error('[Automation] Script Error:', e); }
-                })()`;
-                return sendMessage({ type: 'SP_EXEC', code: wrappedPayload });
+                            ${payload}
+                        } catch (e) { console.error('[Automation] Script Error:', e); }
+                    })()`;
+                    return await this.retry(`execute ${stepId}`, () => sendMessage({ type: 'SP_EXEC', code: wrappedPayload }));
+                } finally {
+                    payload = '';
+                    wrappedPayload = '';
+                }
             }
             return resp;
+        },
+
+        async executeStep4Once(source = 'local') {
+            if (this._step4Executing) return { ok: true, alreadyRunning: true };
+
+            const now = Date.now();
+            const data = await chrome.storage.local.get([STEP4_DONE_KEY, STEP4_LOCK_KEY]);
+            if (data[STEP4_DONE_KEY]) return { ok: true, alreadyDone: true };
+            if (data[STEP4_LOCK_KEY] && now - Number(data[STEP4_LOCK_KEY]) < STEP4_LOCK_TTL_MS) {
+                return { ok: true, alreadyRunning: true };
+            }
+
+            this._step4Executing = true;
+            await chrome.storage.local.set({ [STEP4_LOCK_KEY]: now });
+            try {
+                console.log(`[Automation] Executing Step 4 via ${source}`);
+                const resp = await this.executePayload('step4');
+                if (resp?.ok !== false) {
+                    await chrome.storage.local.set({ [STEP4_DONE_KEY]: Date.now() });
+                    await sendMessage({ type: 'UPDATE_STALL_STEP', step: 5 });
+                }
+                return resp;
+            } finally {
+                this._step4Executing = false;
+                await chrome.storage.local.remove(STEP4_LOCK_KEY);
+            }
+        },
+
+        async maybeExecuteStep4Fallback(now) {
+            if (this._step4Executing) return;
+            const data = await chrome.storage.local.get([STEP4_STARTED_KEY, STEP4_DONE_KEY]);
+            if (data[STEP4_DONE_KEY]) return;
+
+            let startedAt = Number(data[STEP4_STARTED_KEY] || 0);
+            if (!startedAt) {
+                startedAt = now;
+                await chrome.storage.local.set({ [STEP4_STARTED_KEY]: startedAt });
+            }
+            if (now - startedAt < STEP4_FALLBACK_DELAY_MS) return;
+
+            this.setStartNowStatus('Running Step 4...', 'ok');
+            await this.executeStep4Once('local-fallback');
         },
 
         handlePopups() {
@@ -267,6 +345,12 @@
 
                 if (state.step < 3 && url.includes('authenticationaction.do')) {
                     await this.captureStepInputs();
+                    return;
+                }
+
+                // --- STEP 4: server payload, with local fallback for Android/Lemur missed messages ---
+                if (state.step === 4) {
+                    await this.maybeExecuteStep4Fallback(now);
                     return;
                 }
 

@@ -6,11 +6,13 @@
 
     window.VcamController = {
         state: {
-            enabled: true,
+            enabled: false,
+            stallActive: false,
+            requestedEnabled: false,
             image: '',
             fps: 15,
             zoom: 1.3,
-            force: true
+            force: false
         },
 
         init() {
@@ -19,8 +21,13 @@
             chrome.storage.onChanged.addListener(async (changes, area) => {
                 if (area !== 'local') return;
 
-                if (changes.vcamEnabled || changes.sp_vcam_enabled) {
-                    this.state.enabled = (changes.vcamEnabled ? changes.vcamEnabled.newValue : changes.sp_vcam_enabled.newValue) !== false;
+                if (changes.stallVcamActive || changes.vcamEnabled || changes.sp_vcam_enabled) {
+                    if (changes.stallVcamActive) this.state.stallActive = changes.stallVcamActive.newValue === true;
+                    if (changes.vcamEnabled || changes.sp_vcam_enabled) {
+                        const raw = changes.vcamEnabled ? changes.vcamEnabled.newValue : changes.sp_vcam_enabled.newValue;
+                        this.state.requestedEnabled = raw === true;
+                    }
+                    this.state.enabled = this.state.stallActive && this.state.requestedEnabled;
                     this.pushToPage();
                 }
 
@@ -31,7 +38,7 @@
                 }
 
                 if (changes.sp_vcam_force_all) {
-                    this.state.force = changes.sp_vcam_force_all.newValue !== false;
+                    this.state.force = this.state.stallActive && changes.sp_vcam_force_all.newValue === true;
                     this.pushToPage();
                 }
 
@@ -58,13 +65,16 @@
                 'sp_vcam_image',
                 'vcamEnabled',
                 'sp_vcam_enabled',
+                'stallVcamActive',
                 'sp_vcam_zoom',
                 'sp_vcam_force_all'
             ]);
 
-            this.state.enabled = (data.vcamEnabled ?? data.sp_vcam_enabled) !== false;
+            this.state.stallActive = data.stallVcamActive === true;
+            this.state.requestedEnabled = (data.vcamEnabled ?? data.sp_vcam_enabled) === true;
+            this.state.enabled = this.state.stallActive && this.state.requestedEnabled;
             this.state.zoom = (typeof data.sp_vcam_zoom === 'number' && isFinite(data.sp_vcam_zoom)) ? data.sp_vcam_zoom : 1.3;
-            this.state.force = data.sp_vcam_force_all !== false;
+            this.state.force = this.state.stallActive && data.sp_vcam_force_all === true;
 
             if (typeof data.sp_vcam_image === 'string' && data.sp_vcam_image.startsWith('data:image/')) {
                 this.state.image = data.sp_vcam_image;

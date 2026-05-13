@@ -1,21 +1,24 @@
 # STATE.md - MCQ Stability And Deployment Plan
 
 ## Status
-CHECKPOINT_PUSHED
+COMPLETED
 
 ## Active Task
-Analyzed requested bug/improvement list, added protected STALL payload requirements, and pushed a safety checkpoint before implementation changes.
+Phase 8 API key creation reliability.
 
 ## Last Files Modified
+- `backend/app/api/admin_routes/keys.py`
+- `frontend/src/app/hooks/useKeyHandlers.js`
+- `frontend/src/app/layout/DashboardLayout.jsx`
+- `frontend/src/app/App.jsx`
 - `TASK.md`
 - `STATE.md`
-- `tmp/mcq_stability_scaling_plan.md`
 
 ## Last Command Run
-`git push sa_helper before-scale`
+Ran `python -m py_compile backend/app/api/admin_routes/keys.py`, focused API-key route smoke checks for non-critical and critical failures, and `npm run build` for the admin frontend.
 
 ## Last Output/Error
-`792c036..74312d5  before-scale -> before-scale`
+Phase 8 passed focused verification. Alert failure now returns the created plain key with warnings; domain/rate configuration failure revokes the new key before returning an error.
 
 ## Key Findings
 - Learned pHash is unsafe because confidence/confirmation gates are too low and pHash distance is too broad.
@@ -28,4 +31,4 @@ Analyzed requested bug/improvement list, added protected STALL payload requireme
 - Extension logout/API-key removal should wipe server-synced data and cached payloads.
 
 ## Immediate Next Step
-Implement Phase 1: learned-answer safety and trainer-only mode.
+Phase 8 is complete. Next phase from the plan is Phase 9 database split, seed data, and backups.

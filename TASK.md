@@ -1,46 +1,38 @@
-# TASK.md - MCQ Stability And Deployment Plan
+# TASK.md - Phase 8 API Key Creation Reliability
 
 ## Goal
-Analyze the reported MCQ learning, extension performance, STALL, Telegram, Docker, API key, DB, backup, and scaling issues; produce an implementation plan before coding.
+Fix the bug where creating an API key can show an error, then after refresh the key exists but cannot be opened/revealed from the dashboard.
 
 ## Status
-CHECKPOINT_PUSHED
+COMPLETED
 
 ## Scope Included
-- Learned pHash safety and trainer-only mode.
-- Captcha fill speed.
-- VCAM activation scope and RAM/GPU impact.
-- STALL timing and Lemur step 3/4 robustness.
-- Server-only STALL step payloads and logout data wipe.
-- Docker extension packaging failure.
-- Telegram bot registration/deployment plan.
-- API key creation reliability.
-- Global seed DB vs user DB split.
-- Backup targets and scaling architecture.
+- Inspect admin API-key creation routes and frontend create-key modal flow.
+- Identify side effects that can fail after a key row is inserted.
+- Make key creation transactional or return the created plain key with non-fatal warnings.
+- Ensure frontend opens the key modal whenever `api_key` is present, even if warnings exist.
+- Add focused tests or smoke checks for success and side-effect warning behavior.
 
 ## Scope Excluded
-- No code implementation in this planning step.
-- No full repo-wide refactor.
-- No unrelated userscript-engine changes.
+- No full key-management redesign.
+- No long-term encrypted key reveal feature in this phase.
+- No subscription/payment flow changes except where directly tied to API key creation.
 
-## Findings
-- Learned answers currently become clickable too early: new learned rows start at confidence 0.8 and lookup allows confidence >= 0.6.
-- Learned pHash lookup uses distance 10 and returns clickable answers immediately.
-- Captcha is slow because extension types character by character.
-- VCAM defaults enabled/force-all and is injected into Sarathi pages at document start.
-- Docker image does not copy `extension/`, so packaging can fail in container.
-- Telegram bot dependency/deployment is incomplete for Docker; bot should be separate from multi-worker API.
-- API key create can leave a created key without returning the plain key if a post-insert side effect fails.
-- Step 3/Step 4 protected scripts should not be bundled in the extension; they should be fetched on demand, executed, and wiped.
-- Removing an API key/logging out should wipe all server-synced data from extension storage.
-
-## Plan Document
-- `tmp/mcq_stability_scaling_plan.md`
-
-## Immediate Next Step
-Implement Phase 1: learned-answer safety and trainer-only mode.
+## Steps
+1. DONE - Read admin key routes, key services, alert side effects, and frontend key creation component.
+2. DONE - Reproduce/trace the failure shape from code.
+3. DONE - Patch backend so post-create side effects cannot turn a persisted key into an HTTP error.
+4. DONE - Patch frontend to display key if `api_key` exists and show warnings separately.
+5. DONE - Run backend syntax/smoke checks and frontend build.
+6. DONE - Update `STATE.md`.
 
 ## Verification Approach
-- Unit/smoke tests for learned lookup thresholds.
-- Extension smoke for train-only no-click behavior.
-- Backend compile and targeted API checks after implementation.
+- `python -m py_compile` for changed backend Python files.
+- Focused key creation test or direct route/service smoke where possible.
+- `npm run build` for frontend changes.
+
+## Verification Result
+- `python -m py_compile backend/app/api/admin_routes/keys.py` passed.
+- Focused route smoke confirmed a failing alert returns HTTP 201 with `api_key` and warning metadata.
+- Focused route smoke confirmed a critical domain-scope failure revokes the newly-created key and returns a clear HTTP 500.
+- `npm run build` passed for the admin frontend.

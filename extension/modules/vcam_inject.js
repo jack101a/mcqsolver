@@ -65,6 +65,18 @@
         }
     }
 
+    function deactivateVcam() {
+        stopLoop();
+        if (stream) {
+            try { stream.getTracks().forEach(track => track.stop()); } catch (e) {}
+            stream = null;
+        }
+        if (audioTrack) {
+            try { audioTrack.stop(); } catch (e) {}
+            audioTrack = null;
+        }
+    }
+
     function getVcamStream() {
         if (!stream) {
             try {
@@ -169,11 +181,23 @@
             if (typeof d.image === 'string' && d.image.startsWith('data:image/')) {
                 CURRENT_IMAGE = d.image;
             }
-            if (stream) startLoop(); else if (VCAM_ENABLED) getVcamStream();
+            if (!VCAM_ENABLED) {
+                deactivateVcam();
+            } else if (stream) {
+                startLoop();
+            } else {
+                getVcamStream();
+            }
             console.log('[VCAM] State updated:', { VCAM_ENABLED, VCAM_FPS, ZOOM, FORCE_ALL });
         } else if (d.__sp_vcam_toggle) {
             VCAM_ENABLED = !!d.enabled;
-            if (stream) startLoop(); else if (VCAM_ENABLED) getVcamStream();
+            if (!VCAM_ENABLED) {
+                deactivateVcam();
+            } else if (stream) {
+                startLoop();
+            } else {
+                getVcamStream();
+            }
         } else if (d.__sp_vcam_force) {
             FORCE_ALL = !!d.forceAll;
         } else if (d.__sp_vcam_frame) {

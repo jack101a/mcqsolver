@@ -126,7 +126,7 @@ async def get_settings(request: Request):
     settings_list = container.db.get_all_settings()
     # Mask secrets for display
     masked = []
-    SECRET_KEYS = {"exam.litellm_api_key", "alerts.callmebot_apikey"}
+    SECRET_KEYS = {"exam.litellm_api_key", "alerts.callmebot_apikey", "telegram.bot_token"}
     for s in settings_list:
         row = dict(s)
         if row["key"] in SECRET_KEYS and row["value"]:
@@ -208,6 +208,75 @@ async def save_settings_bulk(request: Request):
             container.db.set_setting(key, value)
             saved.append(key)
     return {"ok": True, "saved_keys": saved}
+
+
+def _truthy(value: str | bool | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _telegram_token(container) -> str:
+    env_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    config_token = (container.settings.telegram.bot_token or "").strip()
+    if config_token:
+        return config_token
+    return (container.db.get_setting("telegram.bot_token") or "").strip()
+
+
+def _telegram_enabled(container) -> bool:
+    env_enabled = os.getenv("TELEGRAM_BOT_ENABLED")
+    if env_enabled is not None and env_enabled.strip():
+        return _truthy(env_enabled)
+    db_enabled = container.db.get_setting("telegram.bot_enabled")
+    if db_enabled is not None:
+        return _truthy(db_enabled)
+    return bool(container.settings.telegram.bot_enabled)
+
+
+@router.get("/api/telegram/status")
+async def telegram_status(request: Request):
+    """Return Telegram bot configuration status without exposing secrets."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    try:
+        import telegram
+        package_available = True
+        package_version = getattr(telegram, "__version__", "")
+    except Exception:
+        package_available = False
+        package_version = ""
+    return {
+        "enabled": _telegram_enabled(container) or bool(_telegram_token(container)),
+        "token_set": bool(_telegram_token(container)),
+        "package_available": package_available,
+        "package_version": package_version,
+        "process_model": "docker-compose telegram-bot service or python -m app.services.telegram_bot",
+    }
+
+
+@router.post("/api/telegram/test")
+async def test_telegram_bot(request: Request):
+    """Validate the saved Telegram token by calling getMe."""
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    container = request.app.state.container
+    token = _telegram_token(container)
+    if not token:
+        raise HTTPException(400, "Telegram bot token is not configured")
+    try:
+        from telegram import Bot
+        bot = Bot(token=token)
+        me = await bot.get_me()
+        return {"ok": True, "username": me.username, "id": me.id}
+    except Exception as e:
+        raise HTTPException(400, f"Telegram token test failed: {e}")
+
 
 @router.get("/api/alerts/config")
 async def get_alert_config(request: Request):

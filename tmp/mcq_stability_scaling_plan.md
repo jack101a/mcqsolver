@@ -115,10 +115,10 @@ Goal: stop broad vcam injection and canvas timers.
    - vcam still works after Start STALL.
 
 ### Phase 4 - STALL Timing And Lemur Step 4 Robustness
-Goal: click at 18s +/- 3s and avoid Android step stalls.
+Goal: click between 16-19 seconds and avoid Android step stalls.
 
-1. Change MCQ click window to `15000-21000 ms`.
-2. Add clear `targetClickAt = questionStart + random(15000, 21000)`.
+1. Change MCQ click window to `16000-19000 ms`.
+2. Add clear `targetClickAt = questionStart + random(16000, 19000)`.
 3. Add local step 4 fallback in `stall_automation.js`:
    - after step 3, poll state and URL
    - if current state is 4 and payload not executed, fetch/execute step 4 locally

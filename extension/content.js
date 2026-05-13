@@ -65,8 +65,13 @@
 
             // Step 4 remote trigger (orchestrated by background.js)
             if (msg.type === 'EXECUTE_STALL_STEP' && msg.step === 4 && window.StallAutomation) {
-                window.StallAutomation.executePayload('step4').then(() => {
-                    chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 5 });
+                const runner = typeof window.StallAutomation.executeStep4Once === 'function'
+                    ? window.StallAutomation.executeStep4Once('background')
+                    : window.StallAutomation.executePayload('step4').then(() => {
+                        chrome.runtime.sendMessage({ type: 'UPDATE_STALL_STEP', step: 5 });
+                    });
+                runner.catch(err => {
+                    console.error('[Content] Step 4 execution failed:', err);
                 });
             }
             

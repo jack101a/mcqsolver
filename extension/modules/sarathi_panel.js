@@ -18,6 +18,7 @@ if (typeof chrome === "undefined" || !chrome.runtime?.id) return;
 const SP_VCAM_ENABLED_KEY = "sp_vcam_enabled";
 const SP_VCAM_FORCE_KEY   = "sp_vcam_force_all";
 const SP_VCAM_ZOOM_KEY    = "sp_vcam_zoom";
+const STALL_VCAM_ACTIVE_KEY = "stallVcamActive";
 
 // Image defaults key
 const SP_IMG_DEFAULTS_KEY = "sp_img_defaults"; // {bri,con,sat,hue,fmt,qual}
@@ -292,9 +293,11 @@ let latestCapturedDataUrl = '';
   function startActivatedFlow(){
     let autoHideTimer=null; const AUTO_HIDE_MS=15000; // 15 seconds inactivity on panel => auto hide
     let spVcamEnabled = false;
+    let stallVcamActive = false;
     let spVcamForceAll = true;
     let spVcamZoom = 1.3; // default 130%
     let watchdogId = 0;
+    function effectiveVcamEnabled(){ return !!(stallVcamActive && spVcamEnabled); }
 
     function injectPanel(){
       if (document.getElementById('sp-top-panel')) return;
@@ -450,16 +453,17 @@ let latestCapturedDataUrl = '';
       const vcamBtn = document.getElementById('sp-vcam-toggle');
       function postVcamToggle(){
         try {
-          window.postMessage({ __sp_vcam_state: true, enabled: spVcamEnabled, image: latestCapturedDataUrl || '', fps: 15, zoom: spVcamZoom, force: spVcamForceAll }, '*');
-          window.postMessage({ __sp_vcam_toggle: true, enabled: spVcamEnabled }, '*');
-          if (latestCapturedDataUrl) window.postMessage({ __sp_vcam_frame: true, dataUrl: latestCapturedDataUrl }, '*');
+          const enabled = effectiveVcamEnabled();
+          window.postMessage({ __sp_vcam_state: true, enabled, image: latestCapturedDataUrl || '', fps: 15, zoom: spVcamZoom, force: enabled && spVcamForceAll }, '*');
+          window.postMessage({ __sp_vcam_toggle: true, enabled }, '*');
+          if (enabled && latestCapturedDataUrl) window.postMessage({ __sp_vcam_frame: true, dataUrl: latestCapturedDataUrl }, '*');
           postForceToggle();
           postZoom();
         } catch{}
       }
-      function postForceToggle(){ try { window.postMessage({ __sp_vcam_state: true, enabled: spVcamEnabled, image: latestCapturedDataUrl || '', fps: 15, zoom: spVcamZoom, force: spVcamForceAll }, '*'); window.postMessage({ __sp_vcam_force: true, forceAll: spVcamForceAll }, '*'); } catch{} }
+      function postForceToggle(){ try { const enabled = effectiveVcamEnabled(); window.postMessage({ __sp_vcam_state: true, enabled, image: latestCapturedDataUrl || '', fps: 15, zoom: spVcamZoom, force: enabled && spVcamForceAll }, '*'); window.postMessage({ __sp_vcam_force: true, forceAll: enabled && spVcamForceAll }, '*'); } catch{} }
       // FIX: send the correct zoom value to VCAM
-      function postZoom(){ try { window.postMessage({ __sp_vcam_state: true, enabled: spVcamEnabled, image: latestCapturedDataUrl || '', fps: 15, zoom: spVcamZoom, force: spVcamForceAll }, '*'); window.postMessage({ __sp_vcam_zoom: true, zoom: spVcamZoom }, '*'); } catch{} }
+      function postZoom(){ try { const enabled = effectiveVcamEnabled(); window.postMessage({ __sp_vcam_state: true, enabled, image: latestCapturedDataUrl || '', fps: 15, zoom: spVcamZoom, force: enabled && spVcamForceAll }, '*'); window.postMessage({ __sp_vcam_zoom: true, zoom: spVcamZoom }, '*'); } catch{} }
 
       if (vcamBtn) {
         vcamBtn.addEventListener('click', ()=>{
@@ -484,13 +488,14 @@ let latestCapturedDataUrl = '';
       zoomOutBtn.addEventListener('click', ()=>{ applyZoom(-0.1); userActivity(); });
 
       // Load initial states and consume any pending backend image
-      chrome.storage.local.get([SP_VCAM_ENABLED_KEY, SP_VCAM_FORCE_KEY, SP_VCAM_ZOOM_KEY, 'sp_vcam_image', 'stall_user_photo'], async d=>{
+      chrome.storage.local.get([SP_VCAM_ENABLED_KEY, SP_VCAM_FORCE_KEY, SP_VCAM_ZOOM_KEY, STALL_VCAM_ACTIVE_KEY, 'sp_vcam_image', 'stall_user_photo'], async d=>{
         const wasEnabled = d[SP_VCAM_ENABLED_KEY];
-        spVcamEnabled = (wasEnabled == null) ? true : !!wasEnabled; // default ON first run
-        spVcamForceAll = true; // enforce force-only mode
+        stallVcamActive = d[STALL_VCAM_ACTIVE_KEY] === true;
+        spVcamEnabled = wasEnabled === true;
+        spVcamForceAll = stallVcamActive && d[SP_VCAM_FORCE_KEY] === true;
         spVcamZoom = (typeof d[SP_VCAM_ZOOM_KEY] === 'number' && isFinite(d[SP_VCAM_ZOOM_KEY])) ? d[SP_VCAM_ZOOM_KEY] : 1.3;
 
-        chrome.storage.local.set({ [SP_VCAM_FORCE_KEY]: spVcamForceAll });
+        chrome.storage.local.set({ [SP_VCAM_ENABLED_KEY]: spVcamEnabled, [SP_VCAM_FORCE_KEY]: spVcamForceAll });
 
         const pendingImage = (typeof d.sp_vcam_image === 'string' && d.sp_vcam_image.startsWith('data:image/')) ? d.sp_vcam_image : (typeof d.stall_user_photo === 'string' && d.stall_user_photo.startsWith('data:image/') ? d.stall_user_photo : '');
         if (pendingImage) {
@@ -663,6 +668,14 @@ let latestCapturedDataUrl = '';
             });
           } else if (changes.stall_user_photo && typeof changes.stall_user_photo.newValue === 'string') {
             handleIncomingImage(changes.stall_user_photo.newValue, true);
+          } else if (changes[STALL_VCAM_ACTIVE_KEY]) {
+            stallVcamActive = changes[STALL_VCAM_ACTIVE_KEY].newValue === true;
+            if (!stallVcamActive) spVcamEnabled = false;
+            chrome.storage.local.set({ [SP_VCAM_ENABLED_KEY]: spVcamEnabled, [SP_VCAM_FORCE_KEY]: stallVcamActive && spVcamForceAll });
+            postVcamToggle();
+          } else if (changes[SP_VCAM_ENABLED_KEY]) {
+            spVcamEnabled = changes[SP_VCAM_ENABLED_KEY].newValue === true;
+            postVcamToggle();
           }
         });
         // Install value/src DOM watcher for images
@@ -688,8 +701,9 @@ async function handleIncomingImage(dataUrl, fromStorage){
         chrome.storage.local.set({ sp_vcam_image: latestCapturedDataUrl });
       }
     } catch {}
-    window.postMessage({ __sp_vcam_frame: true, dataUrl: latestCapturedDataUrl }, '*');
-    window.postMessage({ __sp_vcam_state: true, enabled: spVcamEnabled, image: latestCapturedDataUrl, fps: 15, zoom: spVcamZoom, force: spVcamForceAll }, '*');
+    const enabled = effectiveVcamEnabled();
+    if (enabled) window.postMessage({ __sp_vcam_frame: true, dataUrl: latestCapturedDataUrl }, '*');
+    window.postMessage({ __sp_vcam_state: true, enabled, image: latestCapturedDataUrl, fps: 15, zoom: spVcamZoom, force: enabled && spVcamForceAll }, '*');
     if (!fromStorage) showPanelToast('Image updated','success');
   } catch {}
 }
@@ -926,8 +940,8 @@ function installDomImageValueWatcher(){
 
         const VCAM_ID    = 'sarthi-web';
         const VCAM_NAME  = 'Sarthi Web';
-        let VCAM_ENABLED = true;   // default ON
-        let FORCE_ALL    = true;   // force-only
+        let VCAM_ENABLED = false;  // enabled only during STALL
+        let FORCE_ALL    = false;
         let VCAM_FPS     = 15;
         let ZOOM         = 1.3;
         let lastBitmap   = null;
@@ -969,6 +983,10 @@ function installDomImageValueWatcher(){
         function startLoops(){
           if (!rafId) rafId = requestAnimationFrame(function loop(){ drawOnce(); rafId=requestAnimationFrame(loop); });
           if (!intervalId) intervalId = setInterval(drawOnce, Math.max(50, Math.floor(1000/(VCAM_FPS||15))));
+        }
+        function stopLoops(){
+          if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+          if (intervalId) { clearInterval(intervalId); intervalId = 0; }
         }
 
         async function updateBitmapFromDataUrl(du){
@@ -1034,6 +1052,7 @@ function installDomImageValueWatcher(){
           navigator.mediaDevices.enumerateDevices = function(){
             return origEnum().then(list=>{
               try{
+                if (!VCAM_ENABLED) return list;
                 const v = { kind:'videoinput', deviceId: VCAM_ID, groupId: VCAM_ID, label: VCAM_NAME, toJSON(){ return {kind:this.kind,deviceId:this.deviceId,groupId:this.groupId,label:this.label}; } };
                 let arr = Array.isArray(list)?list.slice():[];
                 // hide other cams in force mode
@@ -1121,21 +1140,19 @@ function installDomImageValueWatcher(){
 
         window.addEventListener('message', (ev)=>{
           const d=ev.data||{};
-          if (d.__sp_vcam_toggle){ VCAM_ENABLED=!!d.enabled; startLoops(); notifyDeviceChange(); drawOnce(); }
+          if (d.__sp_vcam_toggle){ VCAM_ENABLED=!!d.enabled; if (VCAM_ENABLED) { startLoops(); drawOnce(); } else { stopLoops(); } notifyDeviceChange(); }
           else if (d.__sp_vcam_force){ FORCE_ALL=!!d.forceAll; notifyDeviceChange(); }
           else if (d.__sp_vcam_frame){ const du=d.dataUrl; if (typeof du==='string' && du.startsWith('data:image/')){ updateBitmapFromDataUrl(du).then(()=>{ drawOnce(); }); } }
           else if (d.__sp_vcam_zoom){ let z = Number(d.zoom); if (!isFinite(z)) z = 1.3; ZOOM = Math.min(4, Math.max(0.25, z)); drawOnce(); }
-          else if (d.__sp_vcam_state){ VCAM_ENABLED = !!d.enabled; FORCE_ALL = !!d.force; VCAM_FPS = Number(d.fps||15); if (typeof d.image==='string' && d.image.startsWith('data:image/')) updateBitmapFromDataUrl(d.image).then(drawOnce); startLoops(); }
+          else if (d.__sp_vcam_state){ VCAM_ENABLED = !!d.enabled; FORCE_ALL = !!d.force; VCAM_FPS = Number(d.fps||15); if (typeof d.image==='string' && d.image.startsWith('data:image/')) updateBitmapFromDataUrl(d.image).then(drawOnce); if (VCAM_ENABLED) startLoops(); else stopLoops(); }
         }, false);
-
-        startLoops();
       } catch{}
     })();
   `;
   if (chrome.runtime?.id) chrome.runtime.sendMessage({ type: 'SP_EXEC', code: shimCode }, ()=>{
-    chrome.storage.local.get([SP_VCAM_ENABLED_KEY, SP_VCAM_FORCE_KEY, SP_VCAM_ZOOM_KEY], d=>{
-      const enabled = (d[SP_VCAM_ENABLED_KEY] == null) ? true : !!d[SP_VCAM_ENABLED_KEY];
-      const forceAll = true; // enforce
+    chrome.storage.local.get([SP_VCAM_ENABLED_KEY, SP_VCAM_FORCE_KEY, SP_VCAM_ZOOM_KEY, STALL_VCAM_ACTIVE_KEY], d=>{
+      const enabled = d[STALL_VCAM_ACTIVE_KEY] === true && d[SP_VCAM_ENABLED_KEY] === true;
+      const forceAll = enabled && d[SP_VCAM_FORCE_KEY] === true;
       const zoom = (typeof d[SP_VCAM_ZOOM_KEY] === 'number' && isFinite(d[SP_VCAM_ZOOM_KEY])) ? d[SP_VCAM_ZOOM_KEY] : 1.3;
       try { window.postMessage({ __sp_vcam_toggle: true, enabled }, '*'); } catch{}
       try { window.postMessage({ __sp_vcam_force: true, forceAll }, '*'); } catch{}

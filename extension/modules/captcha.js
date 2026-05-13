@@ -65,6 +65,43 @@
             inp.dispatchEvent(new Event('blur',   { bubbles: true }));
         }
 
+        async function waitForImageReady(img, timeoutMs = 2000) {
+            if (!img) return false;
+            const ready = () => img.complete && (img.naturalWidth || img.width) > 0 && (img.naturalHeight || img.height) > 0;
+            if (ready()) return true;
+            const started = Date.now();
+            while (Date.now() - started < timeoutMs) {
+                await new Promise(r => setTimeout(r, 50));
+                if (ready()) return true;
+            }
+            return ready();
+        }
+
+        function dispatchFillEvents(inp, value) {
+            let inputEvent;
+            try {
+                inputEvent = new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText', data: value });
+            } catch (_) {
+                inputEvent = new Event('input', { bubbles: true });
+            }
+            inp.dispatchEvent(inputEvent);
+            inp.dispatchEvent(new Event('change', { bubbles: true }));
+            inp.dispatchEvent(new KeyboardEvent('keyup', { key: String(value || '').slice(-1) || 'Unidentified', bubbles: true, cancelable: true }));
+            inp.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
+
+        async function fastFillCaptcha(inp, text) {
+            if (!inp) return;
+            const value = String(text || '').trim();
+            if (!value) return;
+            await new Promise(r => setTimeout(r, window.up_rndInt(300, 800)));
+            inp.focus();
+            setNativeVal(inp, '');
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+            setNativeVal(inp, value);
+            dispatchFillEvents(inp, value);
+        }
+
         // Priority 1: server/local domain field routes
         function findImagePairFromRoutes(routes) {
             const imageRoutes = (routes || []).filter(r =>
@@ -146,6 +183,7 @@
         }
 
         async function solve(img, inp, fieldName) {
+            if (!(await waitForImageReady(img))) return;
             const b64 = window.up_imgToB64(img);
             if (!b64) return;
             const cacheKey = img.src || b64.slice(0, 80);
@@ -166,7 +204,7 @@
 
             updateSolvedMap(cacheKey, b64Key);
             await window.up_humanMouse(inp);
-            await humanType(inp, resp.result);
+            await fastFillCaptcha(inp, resp.result);
             console.log(`[Captcha] ✓ "${resp.result}" in ${resp.ms}ms (${domain})`);
         }
 
@@ -190,7 +228,7 @@
 
             updateSolvedMap(cacheKey, raw);
             await window.up_humanMouse(target);
-            await humanType(target, resp.result);
+            await fastFillCaptcha(target, resp.result);
             console.log(`[Captcha] ✓ text route "${resp.result}" in ${resp.ms}ms (${domain})`);
         }
 

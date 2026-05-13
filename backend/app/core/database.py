@@ -324,7 +324,11 @@ class Database:
                         source           TEXT NOT NULL DEFAULT 'exam_feedback',
                         learning_mode    TEXT NOT NULL DEFAULT 'hash_based',
                         ocr_quality      TEXT NOT NULL DEFAULT 'unverified',
-                        ocr_preview_unreliable INTEGER NOT NULL DEFAULT 1
+                        ocr_preview_unreliable INTEGER NOT NULL DEFAULT 1,
+                        verified_count   INTEGER NOT NULL DEFAULT 0,
+                        wrong_count      INTEGER NOT NULL DEFAULT 0,
+                        last_verified_at TEXT,
+                        status           TEXT NOT NULL DEFAULT 'training'
                     );
                     """
                 )
@@ -382,6 +386,14 @@ class Database:
                     conn.execute("ALTER TABLE exam_learned ADD COLUMN ocr_quality TEXT NOT NULL DEFAULT 'unverified'")
                 if "ocr_preview_unreliable" not in learned_columns:
                     conn.execute("ALTER TABLE exam_learned ADD COLUMN ocr_preview_unreliable INTEGER NOT NULL DEFAULT 1")
+                if "verified_count" not in learned_columns:
+                    conn.execute("ALTER TABLE exam_learned ADD COLUMN verified_count INTEGER NOT NULL DEFAULT 0")
+                if "wrong_count" not in learned_columns:
+                    conn.execute("ALTER TABLE exam_learned ADD COLUMN wrong_count INTEGER NOT NULL DEFAULT 0")
+                if "last_verified_at" not in learned_columns:
+                    conn.execute("ALTER TABLE exam_learned ADD COLUMN last_verified_at TEXT")
+                if "status" not in learned_columns:
+                    conn.execute("ALTER TABLE exam_learned ADD COLUMN status TEXT NOT NULL DEFAULT 'training'")
 
                 # ── Performance indexes ──────────────────────────────
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_task_status ON usage_events(task_type, status)")

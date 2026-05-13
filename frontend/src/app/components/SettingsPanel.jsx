@@ -40,23 +40,55 @@ export function SettingsPanel({
 }) {
   const { isDark, t_textHeading, t_textMuted, t_borderLight, t_rowHover, glassPanel, glassButton, glassInput, badgeSuccess, solidButton } = useThemeContext();
   const [telegramToken, setTelegramToken] = useState("");
+  const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [telegramStatus, setTelegramStatus] = useState(null);
   const [telegramSaving, setTelegramSaving] = useState(false);
+  const [telegramTesting, setTelegramTesting] = useState(false);
 
   useEffect(() => {
     apiGet("/admin/api/settings/telegram.bot_token")
       .then(d => setTelegramToken(d.value || ""))
       .catch(() => {});
+    apiGet("/admin/api/settings/telegram.bot_enabled")
+      .then(d => setTelegramEnabled(String(d.value || "").toLowerCase() === "true"))
+      .catch(() => {});
+    refreshTelegramStatus();
   }, []);
+
+  const refreshTelegramStatus = async () => {
+    try {
+      const data = await apiGet("/admin/api/telegram/status");
+      setTelegramStatus(data);
+    } catch (_) {}
+  };
 
   const saveTelegramToken = async () => {
     setTelegramSaving(true);
     try {
-      await apiPostJson("/admin/api/settings", { key: "telegram.bot_token", value: telegramToken });
-      showToast("Telegram bot token saved");
+      await apiPostJson("/admin/api/settings/bulk", {
+        settings: {
+          "telegram.bot_token": telegramToken,
+          "telegram.bot_enabled": telegramEnabled ? "true" : "false",
+        }
+      });
+      await refreshTelegramStatus();
+      showToast("Telegram bot settings saved");
     } catch (e) {
       showToast("Failed to save: " + e.message);
     }
     setTelegramSaving(false);
+  };
+
+  const testTelegramBot = async () => {
+    setTelegramTesting(true);
+    try {
+      const data = await apiPostJson("/admin/api/telegram/test", {});
+      showToast(`Telegram bot connected: @${data.username || data.id}`);
+      await refreshTelegramStatus();
+    } catch (e) {
+      showToast("Telegram test failed: " + e.message);
+    }
+    setTelegramTesting(false);
   };
 
   const [restarting, setRestarting] = useState(false);
@@ -454,6 +486,25 @@ export function SettingsPanel({
             {telegramSaving ? "Saving..." : "Save"}
           </button>
         </div>
+        <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-3">
+          <label className={`flex items-center gap-2 text-xs ${t_textMuted}`}>
+            <input
+              type="checkbox"
+              checked={telegramEnabled}
+              onChange={(e) => setTelegramEnabled(e.target.checked)}
+            />
+            Enable Telegram registration
+          </label>
+          <button onClick={testTelegramBot} disabled={telegramTesting || !telegramToken} className={glassButton}>
+            {telegramTesting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            {telegramTesting ? "Testing..." : "Test Bot"}
+          </button>
+        </div>
+        {telegramStatus && (
+          <p className={`text-[11px] mt-2 ${t_textMuted}`}>
+            Status: {telegramStatus.enabled ? "enabled" : "disabled"} · Token: {telegramStatus.token_set ? "set" : "missing"} · Package: {telegramStatus.package_available ? telegramStatus.package_version || "available" : "missing"}
+          </p>
+        )}
         <p className={`text-[11px] mt-2 ${t_textMuted}`}>
           Also configurable via <code className="px-1 py-0.5 rounded bg-white/5 text-xs">TELEGRAM_BOT_TOKEN</code> in <code className="px-1 py-0.5 rounded bg-white/5 text-xs">sa_helper/config/.env</code>
         </p>

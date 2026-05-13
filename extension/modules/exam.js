@@ -10,7 +10,7 @@
             REQUIRED_CORRECT:  9,
             MAX_WRONG:         6,
             ABORT_MIN_Q:       14,   // only abort if failing is certain at the very end
-            CLICK_MIN:         12000,
+            CLICK_MIN:         16000,
             CLICK_MAX:         19000,
             DEADLINE:          29000,
             SUBMIT_POLL:       300,
@@ -26,6 +26,7 @@
             totalSeen:     0,
             examComplete:  false,
             questionStart: 0,
+            targetClickAt:  0,
             enabled:       true,
             learningEnabled: true,
             lastSolve:     null,  // { questionB64, optionB64s, selectedOption, method, processingMs }
@@ -317,6 +318,7 @@
             state.processing   = true;
             state.totalSeen++;
             state.questionStart = Date.now();
+            state.targetClickAt = state.questionStart + window.up_rndInt(CFG.CLICK_MIN, CFG.CLICK_MAX);
 
             setStatus('Solving…', 'work');
 
@@ -339,6 +341,15 @@
                 const timeout = new Promise(r => setTimeout(() => r({ ok: false, error: 'TIMEOUT_29S' }), 28500));
                 const resp = await Promise.race([solvePromise, timeout]);
 
+                if (resp?.ok && resp.data?.train_only) {
+                    const candidate = resp.data.candidate_option;
+                    setStatus(`Training ${resp.data.method || 'learned'} (${resp.data.processing_ms || 0}ms)`, 'work');
+                    setResult(`Guess only: Option ${candidate || '?'} (${Math.round((resp.data.confidence || 0) * 100)}%, ${resp.data.verified_count || 0}/10). Not clicking.`);
+                    console.log('[Exam] Train-only learned guess; not clicking:', resp.data);
+                    state.processing = false;
+                    return;
+                }
+
                 if (resp?.ok && resp.data?.option_number) {
                     const optNum = resp.data.option_number;
                     setStatus(`✓ ${resp.data.method} (${resp.data.processing_ms}ms)`, 'ok');
@@ -354,9 +365,8 @@
                     };
                     await storePendingFeedback(state.lastSolve);
 
-                    const delay = window.up_rndInt(CFG.CLICK_MIN, CFG.CLICK_MAX);
-                    const elapsed = Date.now() - state.questionStart;
-                    if (elapsed < delay) await new Promise(r => setTimeout(r, delay - elapsed));
+                    const waitMs = state.targetClickAt - Date.now();
+                    if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
 
                     const isLast = state.totalSeen >= CFG.TOTAL_QUESTIONS;
                     const deadline = state.questionStart + CFG.DEADLINE;

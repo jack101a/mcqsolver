@@ -12,7 +12,7 @@ window.onunhandledrejection = function (ev) {
     console.error('[Popup Unhandled Rejection]', ev.reason);
 };
 
-const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'userscriptsEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'profiles', 'activeProfileId', 'isRecording', 'stallStepScripts', 'theme'];
+const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'userscriptsEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'profiles', 'activeProfileId', 'isRecording', 'theme'];
 
 function el(id) { return document.getElementById(id); }
 function escapeHtml(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
@@ -30,6 +30,16 @@ function setLoading(btnId, loading) {
         btn.classList.remove('loading');
         btn.textContent = btn.dataset.originalText || btn.textContent;
     }
+}
+
+function wipeSyncedData() {
+    return new Promise(resolve => {
+        try {
+            chrome.runtime.sendMessage({ type: 'WIPE_EXTENSION_DATA' }, () => resolve());
+        } catch (_) {
+            resolve();
+        }
+    });
 }
 
 // --- View Management ---
@@ -120,6 +130,7 @@ async function handleLogin() {
             }
             if (resp?.ok) {
                 setLoading('btn-auth-submit', false);
+                await wipeSyncedData();
                 await chrome.storage.local.set({ 
                     apiKey: key, 
                     serverUrl: url,
@@ -145,7 +156,7 @@ async function handleLogin() {
 }
 
 async function handleLogout() {
-    await chrome.storage.local.remove(['apiKey', 'isMaster', 'keyName', 'expiresAt']);
+    await wipeSyncedData();
     showView('view-auth');
 }
 

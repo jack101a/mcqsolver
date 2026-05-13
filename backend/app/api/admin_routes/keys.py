@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -6,6 +7,7 @@ from pathlib import Path
 from .utils import _admin_guard, _write_auto_backup
 
 router = APIRouter(tags=["admin-keys"])
+logger = logging.getLogger(__name__)
 
 # Use absolute path for templates
 _TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates"
@@ -26,20 +28,42 @@ async def api_create_key(
     if denied:
         return denied
     container = request.app.state.container
+    warnings: list[str] = []
     key_id, plain, expires = container.key_service.create_key(name=key_name, expiry_days=expiry_days, key_type=key_type)
     allow_all = str(all_domains).lower() in {"1", "true", "on", "yes"}
     domains = [d.strip() for d in str(allowed_domains_csv or "").split(",") if d.strip()]
-    container.db.set_api_key_domain_scope(key_id=key_id, all_domains=allow_all, domains=domains)
-    if int(requests_per_minute or 0) > 0:
-        container.db.set_api_key_rate_limit(
-            key_id=key_id,
-            requests_per_minute=int(requests_per_minute),
-            burst=int(burst or 0),
-        )
-    _write_auto_backup(container, "api_create_key")
-    # WhatsApp admin notification
-    container.alert_service.notify_new_key(key_name=key_name, expires_at=expires)
-    return {"ok": True, "key_id": key_id, "api_key": plain, "expires_at": expires}
+    try:
+        container.db.set_api_key_domain_scope(key_id=key_id, all_domains=allow_all, domains=domains)
+        if int(requests_per_minute or 0) > 0:
+            container.db.set_api_key_rate_limit(
+                key_id=key_id,
+                requests_per_minute=int(requests_per_minute),
+                burst=int(burst or 0),
+            )
+    except Exception as e:
+        try:
+            container.key_service.revoke_key_by_id(key_id)
+        except Exception:
+            logger.exception("api_key_create_revoke_after_config_failure_failed", extra={"context": {"key_id": key_id}})
+        logger.exception("api_key_create_config_failed", extra={"context": {"key_id": key_id, "error": str(e)}})
+        raise HTTPException(status_code=500, detail="Key was created but configuration failed; the key was revoked. Please create it again.") from e
+
+    try:
+        _write_auto_backup(container, "api_create_key")
+    except Exception as e:
+        logger.exception("api_key_create_backup_failed", extra={"context": {"key_id": key_id, "error": str(e)}})
+        warnings.append("Auto-backup failed after key creation.")
+
+    try:
+        container.alert_service.notify_new_key(key_name=key_name, expires_at=expires)
+    except Exception as e:
+        logger.exception("api_key_create_alert_failed", extra={"context": {"key_id": key_id, "error": str(e)}})
+        warnings.append("WhatsApp notification failed after key creation.")
+
+    return JSONResponse(
+        status_code=201,
+        content={"ok": True, "key_id": key_id, "api_key": plain, "expires_at": expires, "warnings": warnings},
+    )
 
 @router.post("/keys/create")
 async def create_key(request: Request, key_name: str = Form(...), expiry_days: int = Form(30), key_type: str = Form("user")):

@@ -1206,8 +1206,60 @@ def _read_setting(env_key: str, config_val: str, db_key: str, session_factory) -
     return val
 
 
+def _read_payment_settings(settings, session_factory) -> dict:
+    settings_payment = getattr(settings, "payment", None)
+    return {
+        "upi_id": _read_setting("", getattr(settings_payment, "upi_id", ""), "payment.upi_id", session_factory),
+        "qr_image_url": _read_setting("", getattr(settings_payment, "qr_image_url", ""), "payment.qr_image_url", session_factory),
+        "payee_name": _read_setting("", "ta-ta Extension", "payment.payee_name", session_factory),
+        "payment_note_prefix": _read_setting("", "Reg", "payment.note_prefix", session_factory),
+    }
+
+
+def _build_bot(settings, session_factory, token: str) -> TelegramBotService:
+    payment_settings = _read_payment_settings(settings, session_factory)
+    return TelegramBotService(
+        token=token,
+        session_factory=session_factory,
+        upi_id=payment_settings["upi_id"],
+        qr_image_url=payment_settings["qr_image_url"],
+        payee_name=payment_settings["payee_name"],
+        payment_note_prefix=payment_settings["payment_note_prefix"],
+    )
+
+
+def _run_standalone() -> None:
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+
+    from app.core.config import get_settings
+    from app.core.db import init_db, get_session
+
+    settings = get_settings()
+    init_db(settings)
+
+    wait_for_token = os.getenv("TELEGRAM_BOT_WAIT_FOR_TOKEN", "true").lower() in {"1", "true", "yes", "on"}
+    poll_seconds = max(5, int(os.getenv("TELEGRAM_BOT_TOKEN_POLL_SECONDS", "15") or "15"))
+
+    while True:
+        token = _read_setting("TELEGRAM_BOT_TOKEN", settings.telegram.bot_token, "telegram.bot_token", get_session)
+        if token:
+            print(f"Bot starting with token: {token[:10]}...")
+            _build_bot(settings, get_session, token).run()
+            return
+
+        if not wait_for_token:
+            print("TELEGRAM_BOT_TOKEN not set and telegram.bot_token is empty - exiting")
+            sys.exit(1)
+
+        print(f"Telegram bot token not configured yet - waiting {poll_seconds}s")
+        time.sleep(poll_seconds)
+
+
 # Entry point for standalone process
-if __name__ == "__main__":
+if False and __name__ == "__main__":
     import os, sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -1264,49 +1316,12 @@ def start_bot(settings=None, session_factory=None) -> TelegramBotService | None:
         logger.info("Telegram bot token not configured — bot disabled")
         return None
 
-    upi_id = ""
-    qr_image_url = ""
-    payee_name = "ta-ta Extension"
-    note_prefix = "Reg"
-    if settings:
-        upi_id = settings.payment.upi_id
-        qr_image_url = settings.payment.qr_image_url
-    if session_factory:
-        try:
-            session = session_factory()
-            row_upi = session.execute(
-                text("SELECT value FROM platform_settings WHERE key = :key"),
-                {"key": "payment.upi_id"},
-            ).fetchone()
-            if row_upi and row_upi[0]: upi_id = row_upi[0]
-            row_qr = session.execute(
-                text("SELECT value FROM platform_settings WHERE key = :key"),
-                {"key": "payment.qr_image_url"},
-            ).fetchone()
-            if row_qr and row_qr[0]: qr_image_url = row_qr[0]
-            row_payee = session.execute(
-                text("SELECT value FROM platform_settings WHERE key = :key"),
-                {"key": "payment.payee_name"},
-            ).fetchone()
-            if row_payee and row_payee[0]: payee_name = row_payee[0]
-            row_note = session.execute(
-                text("SELECT value FROM platform_settings WHERE key = :key"),
-                {"key": "payment.note_prefix"},
-            ).fetchone()
-            if row_note and row_note[0]: note_prefix = row_note[0]
-            session.close()
-        except Exception:
-            pass
-
     logger.info("Starting Telegram bot in background...")
-    bot = TelegramBotService(
-        token=token,
-        session_factory=session_factory or get_session,
-        upi_id=upi_id,
-        qr_image_url=qr_image_url,
-        payee_name=payee_name,
-        payment_note_prefix=note_prefix,
-    )
+    bot = _build_bot(settings, session_factory or get_session, token)
     t = threading.Thread(target=bot.run, daemon=True, name="telegram-bot")
     t.start()
     return bot
+
+
+if __name__ == "__main__":
+    _run_standalone()

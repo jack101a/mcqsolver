@@ -14,6 +14,11 @@ class SettingsRepository(BaseRepository):
         "exam.ocr_lang":          "eng+hin",
         "exam.ocr_concurrency":   "2",
         "exam.tessdata_path":     "backend/tessdata",
+        # MCQ self-learning safety
+        "exam.learning_mode":      "train_only",
+        "exam.learn_min_confidence": "0.95",
+        "exam.learn_min_confirmations": "10",
+        "exam.learn_phash_max_distance": "3",
         # WhatsApp alerts
         "alerts.whatsapp_enabled":  "false",
         "alerts.callmebot_phone":   "",
@@ -35,6 +40,10 @@ class SettingsRepository(BaseRepository):
         "exam.ocr_lang":            "Tesseract OCR language codes, e.g. eng or eng+hin",
         "exam.ocr_concurrency":     "Maximum concurrent Tesseract OCR calls per API worker",
         "exam.tessdata_path":       "Path to .traineddata files (relative to project root)",
+        "exam.learning_mode":        "MCQ self-learning mode: train_only or auto_click",
+        "exam.learn_min_confidence": "Minimum learned-answer confidence before it can auto-click",
+        "exam.learn_min_confirmations": "Minimum correct confirmations before learned answer can auto-click",
+        "exam.learn_phash_max_distance": "Maximum pHash distance for learned image matching",
         "alerts.whatsapp_enabled":  "Enable WhatsApp admin alerts (true/false)",
         "alerts.callmebot_phone":   "Admin WhatsApp number in E.164 format (+91XXXXXXXXXX)",
         "alerts.callmebot_apikey":  "CallMeBot API key (get from callmebot.com)",

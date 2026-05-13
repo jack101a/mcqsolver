@@ -100,7 +100,7 @@ export function App() {
   const { t_textHeading, t_textMuted, t_rowHover, glassPanel, isDark } = useThemeContext();
 
   const [rememberedKeys,    setRememberedKeys]    = useState({});
-  const [createdKeyModal,   setCreatedKeyModal]   = useState({ open: false, keyId: null, keyValue: "" });
+  const [createdKeyModal,   setCreatedKeyModal]   = useState({ open: false, keyId: null, keyValue: "", warnings: [] });
   const [editingModelId,    setEditingModelId]    = useState(null);
   const [editingModelDraft, setEditingModelDraft] = useState(null);
   const [editingMappingId,    setEditingMappingId]    = useState(null);

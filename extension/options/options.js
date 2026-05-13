@@ -65,6 +65,16 @@ async function getDeviceId() {
     return deviceId;
 }
 
+function wipeSyncedData() {
+    return new Promise(resolve => {
+        try {
+            chrome.runtime.sendMessage({ type: 'WIPE_EXTENSION_DATA' }, () => resolve());
+        } catch (_) {
+            resolve();
+        }
+    });
+}
+
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', () => activateTab(item.dataset.tab));
@@ -359,9 +369,19 @@ function setupDataPortability() {
 el('btn-save-conn').addEventListener('click', async () => {
     const apiKey = el('api-key').value.trim();
     const serverUrl = el('server-url').value.trim().replace(/\/$/, '');
-    if (!apiKey || !serverUrl) return showMsg('conn-msg', 'API Key and URL required', false);
+    if (!apiKey) {
+        setLoading('btn-save-conn', true);
+        await wipeSyncedData();
+        if (el('key-name')) el('key-name').value = '';
+        if (el('key-expires')) el('key-expires').value = '';
+        setLoading('btn-save-conn', false);
+        showMsg('conn-msg', 'API key removed. Server-synced data wiped.');
+        return;
+    }
+    if (!serverUrl) return showMsg('conn-msg', 'Server URL required', false);
     
     setLoading('btn-save-conn', true);
+    await wipeSyncedData();
     await chrome.storage.local.set({ apiKey, serverUrl });
     await verifyKey(apiKey, serverUrl);
     await syncRulesFromServer(apiKey, serverUrl);

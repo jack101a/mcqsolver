@@ -42,6 +42,11 @@ class ExamSolveResponse(BaseModel):
     answer_text: str | None
     method: str                   # "hash" | "ocr_db" | "llm" | "none"
     processing_ms: int
+    train_only: bool = False
+    candidate_option: int | None = None
+    confidence: float | None = None
+    verified_count: int | None = None
+    phash_distance: int | None = None
 
 
 class ExamFeedbackRequest(BaseModel):

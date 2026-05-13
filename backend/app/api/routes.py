@@ -340,6 +340,11 @@ async def exam_solve(request: Request, payload: ExamSolveRequest) -> ExamSolveRe
             answer_text=result.get("answer_text"),
             method=result.get("method", "none"),
             processing_ms=result.get("processing_ms", 0),
+            train_only=bool(result.get("train_only", False)),
+            candidate_option=result.get("candidate_option"),
+            confidence=result.get("confidence"),
+            verified_count=result.get("verified_count"),
+            phash_distance=result.get("phash_distance"),
         )
     except HTTPException:
         raise
@@ -396,7 +401,15 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
 
     # Only learn from correct answers
     if not payload.was_correct:
-        return ExamFeedbackResponse(recorded=True, learned=False, message="Wrong answer — not learning")
+        penalty = None
+        try:
+            penalty = db.exam_learned.record_wrong(question_hash, selected_option=payload.selected_option)
+        except Exception as e:
+            logger.warning("exam_feedback_wrong_penalty_failed", extra={"context": {"error": str(e)}})
+        msg = "Wrong answer - not learning"
+        if penalty and penalty.get("action") == "penalized":
+            msg = f"Wrong answer - learned row penalized (confidence: {penalty['confidence']:.1f})"
+        return ExamFeedbackResponse(recorded=True, learned=False, message=msg)
 
     # OCR the question and options for text storage
     try:

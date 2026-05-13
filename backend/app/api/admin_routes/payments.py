@@ -238,9 +238,11 @@ async def _try_notify_user(telegram_user_id: str, message: str, container) -> bo
             token = container.settings.telegram.bot_token
         if not token:
             from app.core.db import get_session
+            from sqlalchemy import text
             session = get_session()
             row = session.execute(
-                "SELECT value FROM platform_settings WHERE key = 'telegram.bot_token'"
+                text("SELECT value FROM platform_settings WHERE key = :key"),
+                {"key": "telegram.bot_token"},
             ).fetchone()
             session.close()
             if row and row[0]:

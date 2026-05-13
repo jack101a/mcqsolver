@@ -19,12 +19,34 @@ export function useKeyHandlers({
       if (payload.key_id && payload.api_key) {
         setRememberedKeys(prev => ({ ...prev, [String(payload.key_id)]: payload.api_key }));
       }
-      setCreatedKeyModal({ open: true, keyId: payload.key_id ?? null, keyValue: payload.api_key || "" });
+      setCreatedKeyModal({
+        open: true,
+        keyId: payload.key_id ?? null,
+        keyValue: payload.api_key || "",
+        warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
+      });
       setCreateKeyAllDomains(true);
       setCreateKeyDomainSelections([]);
-      showToast("API key created.");
+      showToast(payload.warnings?.length ? "API key created with warnings." : "API key created.");
     },
-    onError: () => showToast("Failed to create key", "error"),
+    onError: (error) => {
+      const data = error?.data;
+      if (data?.api_key) {
+        if (data.key_id) {
+          setRememberedKeys(prev => ({ ...prev, [String(data.key_id)]: data.api_key }));
+        }
+        setCreatedKeyModal({
+          open: true,
+          keyId: data.key_id ?? null,
+          keyValue: data.api_key,
+          warnings: Array.isArray(data.warnings) ? data.warnings : [error.message || "Key created with server warning."],
+        });
+        showToast("API key created with warnings.", "error");
+        invalidate();
+        return;
+      }
+      showToast(error?.message || "Failed to create key", "error");
+    },
   });
 
   const handleCreateKey = async (e) => {
@@ -57,7 +79,7 @@ export function useKeyHandlers({
       showToast("This key cannot be shown. Only keys created from this dashboard browser can be viewed.", "error");
       return;
     }
-    setCreatedKeyModal({ open: true, keyId, keyValue: value });
+    setCreatedKeyModal({ open: true, keyId, keyValue: value, warnings: [] });
   };
 
   const revokeKey = useMutation({

@@ -302,9 +302,44 @@ let pendingDeviceIdPromise = null;
 let automationState = {
     active: false,
     tabId: null,
-    step: 1,
-    payloads: {}
+    step: 1
 };
+
+const SENSITIVE_STORAGE_KEYS = [
+    'apiKey',
+    'isMaster',
+    'keyName',
+    'expiresAt',
+    'lastVerify',
+    'normalized_userscripts',
+    'userscript_logs',
+    'globalFieldRoutes',
+    'globalLocators',
+    'lastSync',
+    'stall_user_photo',
+    'stallStepScripts',
+    '_automationState',
+    '_stall_appNo',
+    '_stall_captcha',
+    '_stall_step4_started_at',
+    '_stall_step4_lock_at',
+    '_stall_step4_done_at',
+    '_locatedSource',
+    '_locatedTarget',
+    '_popupPendingField',
+    'suppressDialogs',
+    'sp_vcam_image',
+    'sp_vcam_enabled',
+    'sp_vcam_force_all',
+    'stallVcamActive'
+];
+
+const SENSITIVE_STORAGE_PREFIXES = [
+    'userscript_require:',
+    'userscript_resource:',
+    'userscript_storage:',
+    'userscript_menu_commands:'
+];
 
 // Promise that resolves once automation state is loaded from storage
 let _stateResolve;
@@ -512,7 +547,17 @@ async function clearStallData() {
             webSQL: true
         }, () => {
             console.log('[Automation] Cache and Cookies cleared for Sarathi domain');
-            chrome.storage.local.remove(['stall_user_photo', 'stallStepScripts', '_stall_appNo', '_stall_captcha'], resolve);
+            chrome.storage.local.remove([
+                'stall_user_photo',
+                'stallStepScripts',
+                '_stall_appNo',
+                '_stall_captcha',
+                '_stall_step4_started_at',
+                '_stall_step4_lock_at',
+                '_stall_step4_done_at',
+                'sp_vcam_image',
+                'stallVcamActive'
+            ], resolve);
         });
     });
 }
@@ -525,12 +570,40 @@ function storageSet(obj) {
     return new Promise(resolve => chrome.storage.local.set(obj, resolve));
 }
 
-async function fetchPackagedStallPayload(stepId) {
-    const fileName = stepId === 'step3' ? 'step3.js' : stepId === 'step4' ? 'step4.js' : '';
-    if (!fileName) return '';
-    const resp = await fetch(chrome.runtime.getURL(`dynamic_steps/${fileName}`));
-    if (!resp.ok) throw new Error(`Bundled ${stepId} script not found`);
-    return resp.text();
+function storageRemove(keys) {
+    return new Promise(resolve => chrome.storage.local.remove(keys, resolve));
+}
+
+async function wipeSyncedExtensionData(options = {}) {
+    const preserveAuth = !!options.preserveAuth;
+    const allData = await storageGet(null);
+    const dynamicKeys = Object.keys(allData || {}).filter(key =>
+        SENSITIVE_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix))
+    );
+    const keys = [...new Set([...SENSITIVE_STORAGE_KEYS, ...dynamicKeys])];
+    const toRemove = preserveAuth ? keys.filter(key => key !== 'apiKey') : keys;
+
+    automationState = {
+        active: false,
+        tabId: null,
+        step: 1
+    };
+    _setStallKeepAlive(false);
+    await storageRemove(toRemove);
+    if (preserveAuth && allData?.apiKey) {
+        await storageSet({ apiKey: allData.apiKey });
+    }
+    console.log(`[Sync] Wiped ${toRemove.length} server-synced/protected storage keys`);
+    return { removed: toRemove.length };
+}
+
+async function fetchServerStallPayload(stepId) {
+    const cleanStepId = String(stepId || '');
+    if (cleanStepId !== 'step3' && cleanStepId !== 'step4') {
+        throw new Error('Invalid STALL step id');
+    }
+    const data = await apiGet(`/v1/automation/payload/${cleanStepId}`);
+    return String(data?.payload || '');
 }
 
 function normalizeDomain(value) {
@@ -969,7 +1042,12 @@ syncAll('wake');
 // Restore STALL automation state if service worker was killed mid-session
 chrome.storage.local.get(['_automationState'], (stored) => {
     if (stored._automationState?.active) {
-        automationState = stored._automationState;
+        automationState = {
+            active: true,
+            tabId: stored._automationState.tabId || null,
+            step: Number(stored._automationState.step || 1)
+        };
+        _persistAutomationState();
         _setStallKeepAlive(true);
         _stallKeepAliveTick();
         console.log('[STALL] Restored automation state from storage, step:', automationState.step);
@@ -982,8 +1060,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     if (automationState.active && automationState.tabId === tabId) {
         automationState.active = false;
         automationState.tabId = null;
+        automationState.step = 1;
         _persistAutomationState();
         _setStallKeepAlive(false);
+        chrome.storage.local.set({ stallVcamActive: false, sp_vcam_enabled: false, sp_vcam_force_all: false }, () => {
+            chrome.storage.local.remove(['_stall_appNo', '_stall_captcha', '_stall_step4_started_at', '_stall_step4_lock_at', '_stall_step4_done_at', 'stall_user_photo', 'sp_vcam_image']);
+        });
         console.log('[STALL] User closed the STALL tab; session stopped.');
     }
 });
@@ -1142,6 +1224,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         syncAll('manual')
         .then(r => sendResponse({ ok: true, ...r }))
         .catch(e => sendResponse({ ok: false, error: e.message }));
+        return true;
+    }
+
+    if (msg.type === 'WIPE_EXTENSION_DATA') {
+        wipeSyncedExtensionData({ preserveAuth: !!msg.preserveAuth })
+            .then(r => sendResponse({ ok: true, ...r }))
+            .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
     }
 
@@ -1313,7 +1402,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg.type === 'NUCLEAR_RESTART') {
         clearStallData().then(() => {
-            if (automationState.active) automationState.step = 1;
+            if (automationState.active) {
+                automationState.step = 1;
+                chrome.storage.local.set({ stallVcamActive: true, sp_vcam_enabled: true, sp_vcam_force_all: true });
+            }
             _persistAutomationState();
             if (sender.tab?.id) {
                 chrome.tabs.update(sender.tab.id, { url: AUTH_FROM_URL });
@@ -1334,23 +1426,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         chrome.browsingData.remove({ since: 0 }, dataToRemove, async () => {
             // Enable dialog suppression for STALL session
-            await chrome.storage.local.set({ suppressDialogs: true });
-            await chrome.storage.local.remove(['stallStepScripts', '_stall_appNo', '_stall_captcha']);
+            await chrome.storage.local.set({
+                suppressDialogs: true,
+                stallVcamActive: true,
+                sp_vcam_enabled: true,
+                sp_vcam_force_all: true
+            });
+            await chrome.storage.local.remove(['stallStepScripts', '_stall_appNo', '_stall_captcha', '_stall_step4_started_at', '_stall_step4_lock_at', '_stall_step4_done_at']);
 
             // Set up state for semi-auto mode
             automationState = {
                 active: true,
                 tabId: null,
-                step: 1,
-                payloads: {
-                    appNo: '',
-                    dob: '',
-                    pwd: '',
-                    step3: '',
-                    step4: '',
-                    step3Code: '',
-                    step4Code: ''
-                }
+                step: 1
             };
             await chrome.storage.local.set({ _automationState: automationState });
 
@@ -1381,39 +1469,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg.type === 'FETCH_STALL_PAYLOAD') {
         const stepId = String(msg.stepId || '');
-        const legacyKey = stepId === 'step3' ? 'step3Code' : stepId === 'step4' ? 'step4Code' : '';
-        const inMemory = automationState?.payloads?.[stepId] || (legacyKey ? automationState?.payloads?.[legacyKey] : '') || '';
-        if (inMemory) {
-            sendResponse({ ok: true, payload: inMemory });
-            return false;
-        }
-
-        chrome.storage.local.get(['stallStepScripts'], stored => {
-            const scripts = stored.stallStepScripts || {};
-            const localPayload = stepId === 'step3' ? (scripts.step3 || scripts.step3Code || '') : stepId === 'step4' ? (scripts.step4 || scripts.step4Code || '') : '';
-            if (localPayload) {
-                sendResponse({ ok: true, payload: localPayload });
-                return;
-            }
-            fetchPackagedStallPayload(stepId)
-                .then(payload => sendResponse({ ok: true, payload }))
-                .catch(() => {
-                    apiGet(`/v1/automation/payload/${msg.stepId}`)
-                        .then(data => sendResponse({ ok: true, payload: data.payload }))
-                        .catch(err => sendResponse({ ok: false, error: err.message }));
-                });
-        });
+        fetchServerStallPayload(stepId)
+            .then(payload => sendResponse({ ok: true, payload }))
+            .catch(err => sendResponse({ ok: false, error: err.message }));
         return true;
     }
 
     if (msg.type === 'UPDATE_STALL_PAYLOADS') {
-        if (automationState.active) {
-            automationState.payloads = { 
-                ...automationState.payloads, 
-                ...msg.payloads 
-            };
-            _persistAutomationState();
-        }
+        console.warn('[Automation] Ignored UPDATE_STALL_PAYLOADS; STALL payloads are server-only.');
         sendResponse({ ok: true });
         return false;
     }
@@ -1426,6 +1489,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
             // Handle specific delays (e.g. 5 seconds between 3 and 4)
             if (msg.step === 4) {
+                chrome.storage.local.set({ _stall_step4_started_at: Date.now() });
                 setTimeout(() => {
                     chrome.tabs.sendMessage(automationState.tabId, { type: 'EXECUTE_STALL_STEP', step: 4 });
                 }, 5000);
@@ -1437,9 +1501,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg.type === 'FINISH_STALL_AUTOMATION') {
         automationState.active = false;
+        automationState.step = 1;
         _persistAutomationState();
         _setStallKeepAlive(false);
-        chrome.storage.local.remove(['stallStepScripts']);
+        chrome.storage.local.set({ stallVcamActive: false, sp_vcam_enabled: false, sp_vcam_force_all: false }, () => {
+            chrome.storage.local.remove(['stallStepScripts', '_stall_appNo', '_stall_captcha', '_stall_step4_started_at', '_stall_step4_lock_at', '_stall_step4_done_at', 'stall_user_photo', 'sp_vcam_image']);
+        });
         console.log('[Automation] STALL session complete. MCQ Solver taking over.');
         sendResponse({ ok: true });
         return false;

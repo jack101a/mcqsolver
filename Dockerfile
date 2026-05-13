@@ -28,6 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY backend/ /app/backend/
+COPY extension/ /app/extension/
 COPY data/ /opt/sa-helper-seed/data/
 COPY backend/config/ /opt/sa-helper-seed/backend/config/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
