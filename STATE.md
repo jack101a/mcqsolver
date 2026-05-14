@@ -1,20 +1,20 @@
-# STATE.md - Push Current Code
+# STATE.md - Verify Learned Hash Use And Push
 
 ## Status
-COMPLETE
+IN PROGRESS
 
 ## Active Task
-Commit and push the current code changes to `sa_helper/before-scale`.
+Verify learned pHash behavior and push current code to `sa_helper/before-scale`.
 
 ## Last Files Modified
 - `TASK.md`
 - `STATE.md`
 
 ## Last Command Run
-`git push sa_helper before-scale`
+`git add STATE.md TASK.md extension/background.js extension/modules/exam.js ...`
 
 ## Last Output/Error
-Push succeeded: `57ecc05..2e54ec5 before-scale -> before-scale`. Runtime database files under `backend/logs/app.db*` remain local and unstaged.
+Staged intended files only. `backend/logs/app.db*` remain unstaged as runtime data.
 
 ## Immediate Next Step
-None.
+Commit and push.

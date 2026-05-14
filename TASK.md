@@ -1,42 +1,42 @@
-# TASK.md - Push Current Code
+# TASK.md - Verify Learned Hash Use And Push
 
 ## Goal
-Commit and push the current code changes to `https://github.com/jack101a/sa_helper/tree/before-scale`.
+Answer whether learned pHash data is used immediately or waits for confidence/verification, then commit and push current code to `sa_helper/before-scale`.
 
 ## Status
-COMPLETE
+IN PROGRESS
 
 ## Scope Included
-- Verify backend, extension, and frontend changes still pass basic checks.
-- Stage source, frontend, extension, package artifact, `TASK.md`, and `STATE.md` changes.
-- Leave local runtime database files under `backend/logs/` unstaged.
-- Commit and push branch `before-scale` to remote `sa_helper`.
+- Inspect the backend exam learning decision path.
+- Verify current extension fixes still pass syntax checks.
+- Stage source/artifact/task files while leaving runtime DB files unstaged.
+- Commit and push `before-scale` to `sa_helper`.
 
 ## Scope Excluded
-- No new feature work.
-- No database/log file commit unless explicitly requested.
+- No new learning behavior changes unless inspection reveals a direct bug required for the question.
+- No runtime database commit.
 
 ## Plan
-- [x] Run verification commands.
-- [x] Stage intended files only.
-- [x] Commit changes.
-- [x] Push `before-scale` to `sa_helper`.
+- [x] Inspect learned pHash solve path.
+- [x] Run verification checks.
+- [x] Stage intended files.
+- [ ] Commit and push.
 
 ## Verification Approach
-- Run frontend build.
-- Run Python compile checks for modified backend files.
-- Run JavaScript syntax checks for modified extension files.
+- Use targeted `rg`/file reads for learning thresholds.
+- Run `node --check extension/modules/exam.js`.
+- Run `node --check extension/background.js`.
+
+## Learned pHash Result
+- Learned exact-hash and pHash rows are only returned by repository getters when `status='verified'`, confidence meets `exam.learn_min_confidence`, confirmations meet `exam.learn_min_confirmations`, and `wrong_count=0`.
+- Defaults are confidence `0.95`, confirmations `10`, and pHash max distance `3`.
+- Even verified learned rows only click when `exam.learning_mode` is `auto_click`; default mode is `train_only`.
+- Unverified learned pHash rows can be returned as train-only candidates, but they set `option_number=None` and should not be clicked by the extension.
 
 ## Verification Result
-- `npm run build` in `frontend` passed.
-- `python -m py_compile ...` for modified backend files passed.
 - `node --check extension/modules/exam.js` passed.
 - `node --check extension/background.js` passed.
 
 ## Staging Result
-- Staged code, UI, extension, package artifacts, and task/state files.
-- Left `backend/logs/app.db*` unstaged as local runtime data.
-
-## Commit And Push Result
-- Committed implementation as `2e54ec5` (`Add dynamic STALL methods and timing fixes`).
-- Pushed `before-scale` to `sa_helper`.
+- Staged extension source, rebuilt extension artifacts, and task/state files.
+- Left `backend/logs/app.db*` unstaged as runtime data.

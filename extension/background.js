@@ -352,7 +352,7 @@ function _persistAutomationState() {
 
 function _setStallKeepAlive(active) {
     if (active) {
-        chrome.alarms.create(STALL_KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
+        chrome.alarms.create(STALL_KEEPALIVE_ALARM, { periodInMinutes: 1 });
     } else {
         chrome.alarms.clear(STALL_KEEPALIVE_ALARM);
     }
@@ -379,12 +379,8 @@ function _injectStallKeepAlive(tabId) {
             window.addEventListener('freeze', stop, true);
             window.addEventListener('resume', stop, true);
             window.__stall_keepalive_tick = window.__stall_keepalive_tick || setInterval(() => {
-                try {
-                    window.dispatchEvent(new Event('focus'));
-                    document.dispatchEvent(new Event('visibilitychange'));
-                    document.body?.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 1, clientY: 1 }));
-                } catch (_) {}
-            }, 5000);
+                void document.visibilityState;
+            }, 30000);
             try {
                 navigator.wakeLock?.request?.('screen').then(lock => {
                     window.__stall_wake_lock = lock;
@@ -400,16 +396,6 @@ function _stallKeepAliveTick() {
     if (!automationState.active || !automationState.tabId) return;
     chrome.tabs.get(automationState.tabId, tab => {
         if (chrome.runtime.lastError || !tab) return;
-        try {
-            chrome.tabs.update(automationState.tabId, { active: true }, () => {
-                void chrome.runtime.lastError;
-            });
-            if (tab.windowId) {
-                chrome.windows.update(tab.windowId, { focused: true }, () => {
-                    void chrome.runtime.lastError;
-                });
-            }
-        } catch (_) {}
         _injectStallKeepAlive(automationState.tabId);
         chrome.tabs.sendMessage(automationState.tabId, { type: 'STALL_KEEPALIVE_TICK' }, () => {
             void chrome.runtime.lastError;

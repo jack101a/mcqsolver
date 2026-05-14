@@ -340,16 +340,15 @@
             setStatus('Solving…', 'work');
 
             try {
-                // If no usable answer is ready by the click window, fall back then.
                 const solvePromise = window.up_sendMsg('SOLVE_EXAM', {
                     questionB64: questionPayload,
                     optionB64s:  optImgs,
                     domain:      window.location.hostname,
                 });
 
-                const clickWindowMs = Math.max(0, state.targetClickAt - Date.now());
-                const clickWindow = new Promise(r => setTimeout(() => r({ ok: false, error: 'CLICK_WINDOW_NO_ANSWER' }), clickWindowMs));
-                const resp = await Promise.race([solvePromise, clickWindow]);
+                const solveDeadlineMs = Math.max(0, (state.questionStart + CFG.DEADLINE) - Date.now());
+                const solveDeadline = new Promise(r => setTimeout(() => r({ ok: false, error: 'SOLVE_DEADLINE_NO_CLICK' }), solveDeadlineMs));
+                const resp = await Promise.race([solvePromise, solveDeadline]);
 
                 if (resp?.ok && resp.data?.train_only) {
                     const candidate = resp.data.candidate_option;
@@ -385,7 +384,7 @@
                 } else {
                     // ── Improved error handling ──────────────────────────
                     const errMsg = resp?.error || '';
-                    const isClickWindowFallback = errMsg === 'CLICK_WINDOW_NO_ANSWER';
+                    const isSolveDeadline = errMsg === 'SOLVE_DEADLINE_NO_CLICK';
 
                     // Auth / config errors — show clear message, don't interact
                     if (/no api key|api key invalid|unauthorized|forbidden|blocked|inactive|payment pending/i.test(errMsg)) {
@@ -396,27 +395,34 @@
                     }
 
                     // Network errors — skip this question, don't click random
-                    if (/network|fetch|failed to fetch|timeout/i.test(errMsg) && !isClickWindowFallback) {
+                    if (/network|fetch|failed to fetch|timeout/i.test(errMsg) && !isSolveDeadline) {
                         setStatus('🌐 Network Error', 'fail');
                         setResult('Cannot reach server. Check your connection.');
                         state.processing = false;
                         return;
                     }
 
-                    await waitForClickWindow(isClickWindowFallback ? 'No answer by click window' : 'No match, waiting for click window');
+                    if (isSolveDeadline) {
+                        setStatus('No answer before deadline', 'fail');
+                        setResult('Solver did not return in time. Not clicking.');
+                        state.processing = false;
+                        return;
+                    }
+
+                    await waitForClickWindow('No match, waiting for click window');
 
                     const optCount = optImgs.length || 3;
                     const randomOpt = window.up_rndInt(1, optCount);
                     
-                    setStatus(isClickWindowFallback ? 'Click Window Fallback' : 'Random Fallback', 'fail');
-                    setResult(`${isClickWindowFallback ? 'No answer in time.' : 'No match.'} Picking random: ${randomOpt}`);
+                    setStatus('Random Fallback', 'fail');
+                    setResult(`Server returned no match. Picking random: ${randomOpt}`);
                     
                     // Store for feedback (random fallback — likely wrong, but track anyway)
                     state.lastSolve = {
                         questionB64: questionPayload,
                         optionB64s:  optImgs,
                         selectedOption: randomOpt,
-                        method:      isClickWindowFallback ? 'click_window_fallback' : 'random_fallback',
+                        method:      'random_fallback',
                         processingMs: 0,
                     };
                     await storePendingFeedback(state.lastSolve);
