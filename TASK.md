@@ -4,7 +4,7 @@
 Commit and push the current code changes to `https://github.com/jack101a/sa_helper/tree/before-scale`.
 
 ## Status
-IN PROGRESS
+COMPLETE
 
 ## Scope Included
 - Verify backend, extension, and frontend changes still pass basic checks.
@@ -19,8 +19,8 @@ IN PROGRESS
 ## Plan
 - [x] Run verification commands.
 - [x] Stage intended files only.
-- [ ] Commit changes.
-- [ ] Push `before-scale` to `sa_helper`.
+- [x] Commit changes.
+- [x] Push `before-scale` to `sa_helper`.
 
 ## Verification Approach
 - Run frontend build.
@@ -36,3 +36,7 @@ IN PROGRESS
 ## Staging Result
 - Staged code, UI, extension, package artifacts, and task/state files.
 - Left `backend/logs/app.db*` unstaged as local runtime data.
+
+## Commit And Push Result
+- Committed implementation as `2e54ec5` (`Add dynamic STALL methods and timing fixes`).
+- Pushed `before-scale` to `sa_helper`.

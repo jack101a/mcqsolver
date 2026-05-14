@@ -1,7 +1,7 @@
 # STATE.md - Push Current Code
 
 ## Status
-IN PROGRESS
+COMPLETE
 
 ## Active Task
 Commit and push the current code changes to `sa_helper/before-scale`.
@@ -11,10 +11,10 @@ Commit and push the current code changes to `sa_helper/before-scale`.
 - `STATE.md`
 
 ## Last Command Run
-`git add ...` explicit source/artifact list
+`git push sa_helper before-scale`
 
 ## Last Output/Error
-Staged intended files only. `backend/logs/app.db*` remain unstaged as local runtime database files.
+Push succeeded: `57ecc05..2e54ec5 before-scale -> before-scale`. Runtime database files under `backend/logs/app.db*` remain local and unstaged.
 
 ## Immediate Next Step
-Commit the staged changes and push `before-scale` to `sa_helper`.
+None.
