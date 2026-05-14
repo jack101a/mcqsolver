@@ -2,30 +2,6 @@
     'use strict';
 
     // ── Stealth & Anti-Debugger ──────────────────────────────────
-    const originalSetInterval = window.setInterval;
-    const originalSetTimeout = window.setTimeout;
-    
-    window.setInterval = function(fn, delay, ...args) {
-        if (typeof fn === 'string' && fn.includes('debugger')) return;
-        return originalSetInterval(fn, delay, ...args);
-    };
-    
-    window.setTimeout = function(fn, delay, ...args) {
-        if (typeof fn === 'string' && fn.includes('debugger')) return;
-        return originalSetTimeout(fn, delay, ...args);
-    };
-
-    // Spoof window properties to hide DevTools detection
-    Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 100 });
-    Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth + 100 });
-
-    // Block visibility/blur events used for anti-cheating
-    const eventsToBlock = ['visibilitychange', 'blur', 'focus'];
-    eventsToBlock.forEach(evt => {
-        window.addEventListener(evt, e => e.stopImmediatePropagation(), true);
-        document.addEventListener(evt, e => e.stopImmediatePropagation(), true);
-    });
-
     window.alert = function() {};
     window.confirm = function() { return true; };
     window.prompt = function(msg, defaultVal) { return defaultVal || ''; };
@@ -93,5 +69,5 @@
         originalXHR.apply(this, arguments);
     };
 
-    console.log('[Unified Platform] Stealth & Interceptor Active');
+    console.log('[Unified Platform] Interceptor Active');
 })();

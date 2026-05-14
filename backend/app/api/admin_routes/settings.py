@@ -49,7 +49,57 @@ def _userscript_sync_status(meta: dict) -> str:
     return "error" if errors else "ready"
 
 
-def _update_index():
+def _access_scope(value: object) -> str:
+    scope = str(value or "global").strip().lower()
+    if scope in {"all", "public"}:
+        return "global"
+    if scope in {"plans"}:
+        return "plan"
+    if scope in {"keys", "user", "users"}:
+        return "key"
+    if scope in {"global", "plan", "key", "custom", "service"}:
+        return scope
+    return "global"
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in re.split(r"[,;\n]+", value) if item.strip()]
+    return []
+
+
+def _int_list(value: object) -> list[int]:
+    items = value if isinstance(value, list) else _string_list(value)
+    out: list[int] = []
+    for item in items:
+        try:
+            out.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _access_from_entry(entry: dict | None) -> dict:
+    entry = entry or {}
+    return {
+        "accessScope": _access_scope(entry.get("accessScope") or entry.get("access_scope") or entry.get("scope")),
+        "plans": _string_list(entry.get("plans") or entry.get("plan_names") or entry.get("allowed_plans")),
+        "apiKeyIds": _int_list(entry.get("apiKeyIds") or entry.get("api_key_ids") or entry.get("allowed_api_key_ids")),
+    }
+
+
+def _access_from_body(body: dict, fallback: dict | None = None) -> dict:
+    fallback_access = _access_from_entry(fallback)
+    return {
+        "accessScope": _access_scope(body.get("accessScope") or body.get("access_scope") or body.get("scope") or fallback_access["accessScope"]),
+        "plans": _string_list(body.get("plans", fallback_access["plans"])),
+        "apiKeyIds": _int_list(body.get("apiKeyIds", body.get("api_key_ids", fallback_access["apiKeyIds"]))),
+    }
+
+
+def _update_index(access_updates: dict[str, dict] | None = None):
     _USERSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     index_path = (_USERSCRIPTS_DIR / "index.json").resolve()
     existing_entries = {}
@@ -72,6 +122,9 @@ def _update_index():
         enabled = True
         if uid in existing_entries:
             enabled = bool(existing_entries[uid].get("enabled", True))
+        access = _access_from_entry(existing_entries.get(uid))
+        if access_updates and uid in access_updates:
+            access = _access_from_body(access_updates[uid], access)
         new_index.append({
             "id": uid,
             "file": file_path.name,
@@ -79,6 +132,9 @@ def _update_index():
             "version": meta["version"],
             "sourceUrl": meta["downloadURL"],
             "enabled": enabled,
+            "accessScope": access["accessScope"],
+            "plans": access["plans"],
+            "apiKeyIds": access["apiKeyIds"],
             "matches": meta["matches"],
             "includes": meta["includes"],
             "exclude": meta["exclude"],
@@ -374,13 +430,18 @@ async def list_userscripts(request: Request):
                         continue
                     code = file_path.read_text(encoding="utf-8")
                     parsed = parse_userscript_meta(code)
+                    matches = entry.get("matches") if isinstance(entry.get("matches"), list) else parsed["matches"]
                     scripts.append({
                         "id": str(entry.get("id") or file_path.stem.replace(".user", "")),
                         "file": file_path.name,
                         "name": str(entry.get("name") or parsed["name"] or file_path.stem),
                         "version": str(entry.get("version") or parsed["version"]),
                         "enabled": bool(entry.get("enabled", True)),
-                        "matches_count": len(entry.get("matches") if isinstance(entry.get("matches"), list) else parsed["matches"]),
+                        "accessScope": _access_from_entry(entry)["accessScope"],
+                        "plans": _access_from_entry(entry)["plans"],
+                        "apiKeyIds": _access_from_entry(entry)["apiKeyIds"],
+                        "matches": matches,
+                        "matches_count": len(matches),
                         "requires_count": len(entry.get("requires") if isinstance(entry.get("requires"), list) else parsed["requires"]),
                         "grants": entry.get("grants") if isinstance(entry.get("grants"), list) else parsed["grants"],
                         "runAt": str(entry.get("runAt") or parsed["runAt"]),
@@ -403,6 +464,10 @@ async def list_userscripts(request: Request):
                 "name": parsed["name"] or file_path.stem,
                 "version": parsed["version"],
                 "enabled": True,
+                "accessScope": "global",
+                "plans": [],
+                "apiKeyIds": [],
+                "matches": parsed["matches"],
                 "matches_count": len(parsed["matches"]),
                 "requires_count": len(parsed["requires"]),
                 "grants": parsed["grants"],
@@ -466,16 +531,20 @@ async def create_userscript(request: Request):
     runAt = (body.get("runAt") or meta["runAt"] or "document-idle").strip()
     
     final_code = _ensure_headers(name, version, matches, runAt, code_body)
+    access = _access_from_body(body)
     _USERSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     file_path = _USERSCRIPTS_DIR / f"{uid}.user.js"
     if file_path.exists():
         raise HTTPException(400, f"Userscript with id {uid} already exists")
     file_path.write_text(final_code, encoding="utf-8")
-    _update_index()
+    _update_index({uid: access})
     final_meta = parse_userscript_meta(final_code)
     return {
         "ok": True,
         "id": uid,
+        "accessScope": access["accessScope"],
+        "plans": access["plans"],
+        "apiKeyIds": access["apiKeyIds"],
         "meta": final_meta,
         "diagnostics": final_meta.get("diagnostics", {"warnings": [], "errors": []}),
         "syncStatus": _userscript_sync_status(final_meta),
@@ -510,15 +579,19 @@ async def update_userscript(request: Request, uid: str):
     runAt = (body.get("runAt") or meta["runAt"] or "document-idle").strip()
     
     final_code = _ensure_headers(name, version, matches, runAt, code_body)
+    access = _access_from_body(body)
     file_path = _USERSCRIPTS_DIR / f"{uid}.user.js"
     if not file_path.exists():
         raise HTTPException(404, f"Userscript {uid} not found")
     file_path.write_text(final_code, encoding="utf-8")
-    _update_index()
+    _update_index({uid: access})
     final_meta = parse_userscript_meta(final_code)
     return {
         "ok": True,
         "id": uid,
+        "accessScope": access["accessScope"],
+        "plans": access["plans"],
+        "apiKeyIds": access["apiKeyIds"],
         "meta": final_meta,
         "diagnostics": final_meta.get("diagnostics", {"warnings": [], "errors": []}),
         "syncStatus": _userscript_sync_status(final_meta),

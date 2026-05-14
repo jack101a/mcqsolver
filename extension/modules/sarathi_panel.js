@@ -928,6 +928,9 @@ function installDomImageValueWatcher(){
 
 // ========== VIRTUAL WEBCAM SHIM (MAIN world via SP_EXEC) ==========
 (function installVirtualWebcamShimInMainWorld(){
+  // Disabled: the dedicated document_start MAIN-world vcam_inject.js owns VCam now.
+  // Keeping two camera shims caused race conditions on mobile Chromium browsers.
+  return;
   if (location.hostname !== "sarathi.parivahan.gov.in") return;
   function isAllowedStallVcamUrl(){
     try {

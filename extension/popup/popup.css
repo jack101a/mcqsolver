@@ -89,6 +89,7 @@ body {
 
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-dot.ok { background: var(--success); box-shadow: 0 0 8px var(--success); }
+.status-dot.warn { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
 .status-dot.err { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
 .status-dot.idle { background: var(--muted); }
 

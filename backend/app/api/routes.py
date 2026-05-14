@@ -114,6 +114,76 @@ def _userscript_sync_status(meta: dict) -> str:
     return "error" if errors else "ready"
 
 
+def _normalize_userscript_plan(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+def _userscript_string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in re.split(r"[,;\n]+", value) if item.strip()]
+    return []
+
+
+def _userscript_int_list(value: object) -> list[int]:
+    items = value if isinstance(value, list) else _userscript_string_list(value)
+    out: list[int] = []
+    for item in items:
+        try:
+            out.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _userscript_access(entry: dict) -> dict:
+    scope = str(
+        entry.get("accessScope")
+        or entry.get("access_scope")
+        or entry.get("scope")
+        or "global"
+    ).strip().lower()
+    if scope in {"all", "public"}:
+        scope = "global"
+    elif scope in {"plans"}:
+        scope = "plan"
+    elif scope in {"keys", "user", "users"}:
+        scope = "key"
+    elif scope not in {"global", "plan", "key", "custom", "service"}:
+        scope = "global"
+    return {
+        "accessScope": scope,
+        "plans": _userscript_string_list(entry.get("plans") or entry.get("plan_names") or entry.get("allowed_plans")),
+        "apiKeyIds": _userscript_int_list(entry.get("apiKeyIds") or entry.get("api_key_ids") or entry.get("allowed_api_key_ids")),
+    }
+
+
+def _userscript_allowed_for_key(entry: dict, key_record: dict, entitlements: dict) -> bool:
+    if not bool(entry.get("enabled", True)) and key_record.get("key_type") != "master":
+        return False
+    if key_record.get("key_type") == "master":
+        return True
+
+    access = _userscript_access(entry)
+    scope = access["accessScope"]
+    if scope == "global":
+        return True
+    if scope == "plan":
+        allowed_plans = {_normalize_userscript_plan(item) for item in access["plans"]}
+        current_plan = _normalize_userscript_plan(entitlements.get("plan_name") or "")
+        return bool(current_plan and current_plan in allowed_plans)
+    if scope in {"key", "custom"}:
+        try:
+            return int(key_record["id"]) in set(access["apiKeyIds"])
+        except (KeyError, TypeError, ValueError):
+            return False
+    if scope == "service":
+        services = entitlements.get("services") or {}
+        return services.get("custom") is not False
+    return False
+
+
 def _dynamic_automation_enabled(container) -> bool:
     """Check if dynamic automation methods are enabled in platform settings."""
     return container.db.get_setting("automation.dynamic_methods_enabled", "false").lower() in ("1", "true", "yes", "on")
@@ -131,7 +201,11 @@ async def sync_userscripts(request: Request) -> dict:
     - Optional index file in data/userscripts or data/mappings
     - Fallback: all *.user.js files in the first populated source directory
     """
-    _ensure_service_allowed(request, "custom")
+    key_record = request.state.api_key_record
+    if not key_record:
+        raise HTTPException(401, "API key required")
+    container = request.app.state.container
+    entitlements = container.db.get_api_key_entitlements(int(key_record["id"]))
     root = get_project_root()
     candidate_dirs = [
         (root / "data" / "userscripts").resolve(),
@@ -167,6 +241,9 @@ async def sync_userscripts(request: Request) -> dict:
                     code = path.read_text(encoding="utf-8")
                     parsed = parse_userscript_meta(code)
                     script_id = str(entry.get("id") or Path(file_name).stem.replace(".user", "")).strip()
+                    if not _userscript_allowed_for_key(entry, key_record, entitlements):
+                        continue
+                    access = _userscript_access(entry)
                     scripts_data.append({
                         "id": script_id,
                         "name": str(entry.get("name") or parsed["name"] or script_id),
@@ -174,6 +251,9 @@ async def sync_userscripts(request: Request) -> dict:
                         "description": str(entry.get("description") or parsed["description"]),
                         "sourceUrl": str(entry.get("sourceUrl") or entry.get("installUrl") or parsed["downloadURL"] or ""),
                         "enabled": bool(entry.get("enabled", True)),
+                        "accessScope": access["accessScope"],
+                        "plans": access["plans"],
+                        "apiKeyIds": access["apiKeyIds"],
                         "matches": entry.get("matches") if isinstance(entry.get("matches"), list) else parsed["matches"],
                         "includes": entry.get("includes") if isinstance(entry.get("includes"), list) else parsed["includes"],
                         "exclude": entry.get("exclude") if isinstance(entry.get("exclude"), list) else parsed["exclude"],
@@ -201,6 +281,9 @@ async def sync_userscripts(request: Request) -> dict:
                 code = filepath.read_text(encoding="utf-8")
                 parsed = parse_userscript_meta(code)
                 script_id = filepath.stem.replace(".user", "")
+                entry = {"enabled": True, "accessScope": "global", "plans": [], "apiKeyIds": []}
+                if not _userscript_allowed_for_key(entry, key_record, entitlements):
+                    continue
                 scripts_data.append({
                     "id": script_id,
                     "name": parsed["name"] or script_id,
@@ -208,6 +291,9 @@ async def sync_userscripts(request: Request) -> dict:
                     "description": parsed["description"],
                     "sourceUrl": parsed["downloadURL"],
                     "enabled": True,
+                    "accessScope": "global",
+                    "plans": [],
+                    "apiKeyIds": [],
                     "matches": parsed["matches"],
                     "includes": parsed["includes"],
                     "exclude": parsed["exclude"],
@@ -439,17 +525,30 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
     try:
         from app.services.exam_service import ExamService
         opt_texts = []
+        opt_hashes = []
+        opt_phashes = []
         for opt_b64 in payload.option_images_b64:
             try:
                 opt_img = _b64_to_pil(opt_b64)
+                opt_hashes.append(_djb2_hash(opt_img))
+                opt_phashes.append(_phash(opt_img))
                 opt_texts.append(ExamService._ocr_text_static(opt_img))
             except Exception:
+                opt_hashes.append("")
+                opt_phashes.append("")
                 opt_texts.append("")
         question_text = ExamService._ocr_text_static(q_img)
     except Exception as e:
         logger.warning("exam_feedback_ocr_failed", extra={"context": {"error": str(e)}})
         question_text = ""
         opt_texts = ["", "", "", ""]
+        opt_hashes = ["", "", "", ""]
+        opt_phashes = ["", "", "", ""]
+
+    correct_index = int(payload.selected_option) - 1
+    correct_option_text = opt_texts[correct_index] if 0 <= correct_index < len(opt_texts) else ""
+    correct_option_hash = opt_hashes[correct_index] if 0 <= correct_index < len(opt_hashes) else ""
+    correct_option_phash = opt_phashes[correct_index] if 0 <= correct_index < len(opt_phashes) else ""
 
     # Upsert into learned database
     result = db.upsert_exam_learned(
@@ -461,6 +560,9 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
         option_3=opt_texts[2] if len(opt_texts) > 2 else "",
         option_4=opt_texts[3] if len(opt_texts) > 3 else "",
         correct_option=payload.selected_option,
+        correct_option_hash=correct_option_hash,
+        correct_option_phash=correct_option_phash,
+        correct_option_text=correct_option_text,
         source="exam_feedback",
         learning_mode="hash_based",
         ocr_quality="unverified_preview",

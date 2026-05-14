@@ -19,6 +19,7 @@ class SettingsRepository(BaseRepository):
         "exam.learn_min_confidence": "0.95",
         "exam.learn_min_confirmations": "10",
         "exam.learn_phash_max_distance": "3",
+        "exam.learn_option_phash_max_distance": "3",
         # WhatsApp alerts
         "alerts.whatsapp_enabled":  "false",
         "alerts.callmebot_phone":   "",
@@ -44,6 +45,7 @@ class SettingsRepository(BaseRepository):
         "exam.learn_min_confidence": "Minimum learned-answer confidence before it can auto-click",
         "exam.learn_min_confirmations": "Minimum correct confirmations before learned answer can auto-click",
         "exam.learn_phash_max_distance": "Maximum pHash distance for learned image matching",
+        "exam.learn_option_phash_max_distance": "Maximum pHash distance for remapping a learned answer to shuffled options",
         "alerts.whatsapp_enabled":  "Enable WhatsApp admin alerts (true/false)",
         "alerts.callmebot_phone":   "Admin WhatsApp number in E.164 format (+91XXXXXXXXXX)",
         "alerts.callmebot_apikey":  "CallMeBot API key (get from callmebot.com)",

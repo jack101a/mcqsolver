@@ -185,8 +185,6 @@ function renderUserOptions(data) {
     setText('user-info-mobile', firstValue(data, ['mobile', 'phone', 'mobileNo', 'phoneNumber']));
     setText('user-info-expiry', formatAccountExpiry(firstValue(data, ['expiresAt', 'expires_at'], '')));
     setText('user-info-telegram', firstValue(data, ['telegramId', 'telegram_id', 'tgId', 'tg_id']));
-    setText('user-info-services', renderServiceList(data));
-
     const light = el('user-conn-light');
     if (light) light.className = `conn-light ${connectionLight(data)}`;
 

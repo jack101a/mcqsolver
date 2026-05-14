@@ -319,6 +319,9 @@ class Database:
                         option_3         TEXT DEFAULT '',
                         option_4         TEXT DEFAULT '',
                         correct_option   INTEGER NOT NULL,
+                        correct_option_hash TEXT NOT NULL DEFAULT '',
+                        correct_option_phash TEXT NOT NULL DEFAULT '',
+                        correct_option_text TEXT NOT NULL DEFAULT '',
                         confidence       REAL NOT NULL DEFAULT 0.8,
                         seen_count       INTEGER NOT NULL DEFAULT 1,
                         first_seen       TEXT NOT NULL,
@@ -416,6 +419,12 @@ class Database:
                     conn.execute("ALTER TABLE exam_learned ADD COLUMN last_verified_at TEXT")
                 if "status" not in learned_columns:
                     conn.execute("ALTER TABLE exam_learned ADD COLUMN status TEXT NOT NULL DEFAULT 'training'")
+                if "correct_option_hash" not in learned_columns:
+                    conn.execute("ALTER TABLE exam_learned ADD COLUMN correct_option_hash TEXT NOT NULL DEFAULT ''")
+                if "correct_option_phash" not in learned_columns:
+                    conn.execute("ALTER TABLE exam_learned ADD COLUMN correct_option_phash TEXT NOT NULL DEFAULT ''")
+                if "correct_option_text" not in learned_columns:
+                    conn.execute("ALTER TABLE exam_learned ADD COLUMN correct_option_text TEXT NOT NULL DEFAULT ''")
 
                 # ── Performance indexes ──────────────────────────────
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_task_status ON usage_events(task_type, status)")

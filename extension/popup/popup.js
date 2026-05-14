@@ -58,7 +58,8 @@ function showView(viewId) {
 // --- Status & UI Helpers ---
 function updateStatusDot(dotId, state) {
     const dot = el(dotId);
-    if (dot) dot.className = `status-dot ${state}`;
+    const normalized = state === 'green' ? 'ok' : state === 'red' ? 'err' : state === 'yellow' ? 'warn' : state;
+    if (dot) dot.className = `status-dot ${normalized}`;
 }
 
 function calculateExpiry(expiryStr) {
@@ -78,20 +79,22 @@ function calculateExpiry(expiryStr) {
 async function checkServerHealth(serverUrl) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
+    const started = Date.now();
     try {
         const resp = await fetch(`${serverUrl}/health`, { signal: controller.signal });
         clearTimeout(timeout);
         if (resp.ok) {
-            updateStatusDot('user-dot', 'ok');
-            updateStatusDot('master-dot', 'ok');
+            const state = Date.now() - started > 1200 ? 'yellow' : 'green';
+            updateStatusDot('user-dot', state);
+            updateStatusDot('master-dot', state);
         } else {
-            updateStatusDot('user-dot', 'err');
-            updateStatusDot('master-dot', 'err');
+            updateStatusDot('user-dot', 'red');
+            updateStatusDot('master-dot', 'red');
         }
     } catch (_) {
         clearTimeout(timeout);
-        updateStatusDot('user-dot', 'idle');
-        updateStatusDot('master-dot', 'idle');
+        updateStatusDot('user-dot', 'red');
+        updateStatusDot('master-dot', 'red');
     }
 }
 
@@ -257,7 +260,7 @@ function setupUserUI(data) {
     applyEntitledToggle('user-tog-autofill', services.autofill !== false, data.autofillEnabled, 'autofillEnabled');
     applyEntitledToggle('user-tog-captcha', services.captcha !== false, data.captchaEnabled, 'captchaEnabled');
     applyEntitledToggle('user-tog-exam', services.stall !== false && services.solver !== false, data.solverEnabled, 'solverEnabled');
-    applyEntitledToggle('user-tog-userscripts', services.custom === true, data.userscriptsEnabled, 'userscriptsEnabled');
+    chrome.storage.local.set({ userscriptsEnabled: true });
     el('user-expiry').textContent = calculateExpiry(data.expiresAt);
     el('user-key-name').textContent = data.keyName || 'Active User';
     
@@ -320,7 +323,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('user-tog-autofill').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ autofillEnabled: e.target.checked }); });
     el('user-tog-captcha').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ captchaEnabled: e.target.checked }); });
     el('user-tog-exam').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ solverEnabled: e.target.checked }); });
-    el('user-tog-userscripts').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ userscriptsEnabled: e.target.checked }); });
+    if (el('user-tog-userscripts')) {
+        el('user-tog-userscripts').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ userscriptsEnabled: e.target.checked }); });
+    }
 
     // Toggles - Master
     el('tog-autofill').addEventListener('change', e => chrome.storage.local.set({ autofillEnabled: e.target.checked }));

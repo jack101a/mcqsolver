@@ -39,6 +39,9 @@ class ExamLearnedRepository(BaseRepository):
         option_3: str,
         option_4: str,
         correct_option: int,
+        correct_option_hash: str = "",
+        correct_option_phash: str = "",
+        correct_option_text: str = "",
         confidence_delta: float = 0.1,
         source: str = "exam_feedback",
         learning_mode: str = "hash_based",
@@ -84,6 +87,9 @@ class ExamLearnedRepository(BaseRepository):
                             option_2 = CASE WHEN option_2 = '' THEN ? ELSE option_2 END,
                             option_3 = CASE WHEN option_3 = '' THEN ? ELSE option_3 END,
                             option_4 = CASE WHEN option_4 = '' THEN ? ELSE option_4 END,
+                            correct_option_hash = CASE WHEN ? != '' THEN ? ELSE correct_option_hash END,
+                            correct_option_phash = CASE WHEN ? != '' THEN ? ELSE correct_option_phash END,
+                            correct_option_text = CASE WHEN ? != '' THEN ? ELSE correct_option_text END,
                             learning_mode = ?,
                             ocr_quality = ?,
                             ocr_preview_unreliable = ?
@@ -104,6 +110,12 @@ class ExamLearnedRepository(BaseRepository):
                             option_2,
                             option_3,
                             option_4,
+                            correct_option_hash,
+                            correct_option_hash,
+                            correct_option_phash,
+                            correct_option_phash,
+                            correct_option_text,
+                            correct_option_text,
                             learning_mode,
                             ocr_quality,
                             1 if ocr_preview_unreliable else 0,
@@ -124,10 +136,11 @@ class ExamLearnedRepository(BaseRepository):
                     """
                     INSERT INTO exam_learned
                         (question_hash, question_phash, question_text, option_1, option_2, option_3, option_4,
+                         correct_option_hash, correct_option_phash, correct_option_text,
                          correct_option, confidence, seen_count, first_seen, last_seen, source,
                          learning_mode, ocr_quality, ocr_preview_unreliable,
                          verified_count, wrong_count, last_verified_at, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, 0, ?, 'training')
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, 0, ?, 'training')
                     """,
                     (
                         question_hash,
@@ -137,6 +150,9 @@ class ExamLearnedRepository(BaseRepository):
                         option_2,
                         option_3,
                         option_4,
+                        correct_option_hash,
+                        correct_option_phash,
+                        correct_option_text,
                         correct_option,
                         0.8,
                         now,
@@ -300,7 +316,10 @@ class ExamLearnedRepository(BaseRepository):
                 "option_3": row.get("option_3", ""),
                 "option_4": row.get("option_4", ""),
                 "correct_option_number": row["correct_option"],
-                "correct_answer_target": row.get(f"option_{row['correct_option']}", ""),
+                "correct_answer_target": row.get("correct_option_text") or row.get(f"option_{row['correct_option']}", ""),
+                "_correct_option_hash": row.get("correct_option_hash", ""),
+                "_correct_option_phash": row.get("correct_option_phash", ""),
+                "_correct_option_text": row.get("correct_option_text", ""),
                 "chapter": "Hash Learned",
                 "_source": row.get("source", "exam_feedback"),
                 "_confidence": row["confidence"],

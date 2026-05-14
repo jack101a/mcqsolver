@@ -295,8 +295,11 @@ async function migrateUserscripts() {
 
 const API_BASE = 'http://localhost:8080'; // Default API endpoint (use HTTPS in production)
 const SYNC_ALARM = 'auto_sync';
+const HEAVY_SYNC_ALARM = 'heavy_auto_sync';
 const STALL_KEEPALIVE_ALARM = 'stall_keepalive';
 const SYNC_PERIOD_MIN = 5;
+const HEAVY_SYNC_PERIOD_MIN = 180;
+const HEAVY_SYNC_MIN_INTERVAL_MS = HEAVY_SYNC_PERIOD_MIN * 60 * 1000;
 let cachedDeviceId = '';
 let pendingDeviceIdPromise = null;
 let automationState = {
@@ -372,12 +375,6 @@ function _injectStallKeepAlive(tabId) {
                 Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
                 Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
             } catch (_) {}
-            const stop = (event) => event.stopImmediatePropagation();
-            document.addEventListener('visibilitychange', stop, true);
-            window.addEventListener('blur', stop, true);
-            window.addEventListener('pagehide', stop, true);
-            window.addEventListener('freeze', stop, true);
-            window.addEventListener('resume', stop, true);
             window.__stall_keepalive_tick = window.__stall_keepalive_tick || setInterval(() => {
                 void document.visibilityState;
             }, 30000);
@@ -477,21 +474,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
             history.replaceState = function() {
               if (arguments[2] && arguments[2].toString().includes("403.jsp")) arguments[2] = authURL;
               return _replaceState.apply(this, arguments);
-            };
-            // Block anti-devtools event traps
-            document.addEventListener("visibilitychange", (e) => { e.stopImmediatePropagation(); }, true);
-            window.addEventListener("blur",  (e) => { e.stopImmediatePropagation(); }, true);
-            window.addEventListener("focus", (e) => { e.stopImmediatePropagation(); }, true);
-            // Filter debugger in timers
-            const _setInterval = window.setInterval;
-            window.setInterval = function(fn, delay, ...args) {
-              if (typeof fn === "string" && fn.includes("debugger")) return 0;
-              return _setInterval(fn, delay, ...args);
-            };
-            const _setTimeout = window.setTimeout;
-            window.setTimeout = function(fn, delay, ...args) {
-              if (typeof fn === "string" && fn.includes("debugger")) return 0;
-              return _setTimeout(fn, delay, ...args);
             };
             // Block devtools alerts only
             window.alert = function(msg) {
@@ -922,11 +904,51 @@ async function syncPendingRoutesToServer() {
 // Content scripts read from storage — no restart needed.
 // ─────────────────────────────────────────────────────────────────
 
-async function syncAll(source) {
+async function syncAuthState(source) {
+    const { apiKey } = await getSettings();
+    if (!apiKey) {
+        console.log(`[AuthSync:${source}] Skipped - no API key`);
+        return { ok: false, reason: 'no_key' };
+    }
+    try {
+        const d = await apiGet('/v1/auth/verify');
+        const services = d.enabled_services || d.services || {};
+        await chrome.storage.local.set({
+            isMaster: !!d.is_master,
+            keyName: d.key_name || '',
+            expiresAt: d.expires_at || null,
+            planName: d.plan_name || d.plan || '',
+            mobile: d.mobile || d.phone || '',
+            telegramId: d.telegram_id || d.tg_id || '',
+            enabledServices: services,
+            autofillEnabled: services.autofill !== false,
+            captchaEnabled: services.captcha !== false,
+            solverEnabled: services.stall !== false && services.solver !== false,
+            ...(!d.is_master ? { userscriptsEnabled: true } : {}),
+            lastVerify: Date.now()
+        });
+        return { ok: true, verified: true };
+    } catch (e) {
+        console.warn(`[AuthSync:${source}] Verify failed:`, e.message);
+        return { ok: false, error: e.message };
+    }
+}
+
+async function syncHeavyData(source, options = {}) {
     const { apiKey } = await getSettings();
     if (!apiKey) {
         console.log('[Sync] Skipped — no API key');
         return { ok: false, reason: 'no_key' };
+    }
+
+    const force = options.force === true;
+    const now = Date.now();
+    const state = await storageGet(['lastHeavySync']);
+    const lastHeavySync = Number(state.lastHeavySync || 0);
+    if (!force && lastHeavySync && (now - lastHeavySync) < HEAVY_SYNC_MIN_INTERVAL_MS) {
+        const nextInMs = HEAVY_SYNC_MIN_INTERVAL_MS - (now - lastHeavySync);
+        console.log(`[Sync:${source}] Heavy sync skipped; next in ${Math.ceil(nextInMs / 60000)} min`);
+        return { ok: true, skippedHeavy: true, nextHeavySyncInMs: nextInMs };
     }
 
     const results = { routes: false, locators: false, rules: false };
@@ -934,7 +956,7 @@ async function syncAll(source) {
     // 1. Field-mapping routes (domain → [{source_selector, target_selector, task_type, …}])
     try {
         const routes = await apiGet('/v1/field-mappings/routes');
-        await chrome.storage.local.set({ globalFieldRoutes: routes, lastSync: Date.now() });
+        await chrome.storage.local.set({ globalFieldRoutes: routes, lastSync: Date.now(), lastHeavySync: Date.now() });
         results.routes = Object.keys(routes).length;
         console.log(`[Sync:${source}] Routes synced — ${results.routes} domains`);
     } catch (e) {
@@ -983,10 +1005,10 @@ async function syncAll(source) {
                     });
                 }
             }
-            const existing = await storageGet(['userscriptsEnabled']);
+            const existing = await storageGet(['userscriptsEnabled', 'isMaster']);
             await chrome.storage.local.set({
                 normalized_userscripts: normalized,
-                userscriptsEnabled: existing.userscriptsEnabled !== false
+                userscriptsEnabled: existing.isMaster ? existing.userscriptsEnabled !== false : true
             });
             results.userscripts = normalized.length;
             console.log(`[Sync:${source}] Userscripts synced — ${results.userscripts} scripts`);
@@ -1002,28 +1024,20 @@ async function syncAll(source) {
 // Chrome Alarms — periodic auto-sync every SYNC_PERIOD_MIN minutes
 // ─────────────────────────────────────────────────────────────────
 
+async function syncAll(source, options = {}) {
+    const auth = await syncAuthState(source);
+    const heavy = await syncHeavyData(source, { force: options.forceHeavy === true });
+    return { ok: !!(auth.ok || heavy.ok), auth, ...heavy };
+}
+
 chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
+chrome.alarms.create(HEAVY_SYNC_ALARM, { periodInMinutes: HEAVY_SYNC_PERIOD_MIN });
 
 chrome.alarms.onAlarm.addListener(alarm => {
     if (alarm.name === SYNC_ALARM) {
-        syncAll('alarm');
-        // Periodic verification to keep isMaster/expiresAt fresh
-        apiGet('/v1/auth/verify').then(d => {
-            const services = d.enabled_services || d.services || {};
-            chrome.storage.local.set({
-                isMaster: !!d.is_master,
-                keyName: d.key_name || '',
-                expiresAt: d.expires_at || null,
-                planName: d.plan_name || d.plan || '',
-                mobile: d.mobile || d.phone || '',
-                telegramId: d.telegram_id || d.tg_id || '',
-                enabledServices: services,
-                autofillEnabled: services.autofill !== false,
-                captchaEnabled: services.captcha !== false,
-                solverEnabled: services.stall !== false && services.solver !== false,
-                lastVerify: Date.now()
-            });
-        }).catch(() => {});
+        syncAuthState('alarm');
+    } else if (alarm.name === HEAVY_SYNC_ALARM) {
+        syncHeavyData('heavy_alarm', { force: true });
     } else if (alarm.name === STALL_KEEPALIVE_ALARM) {
         _stallKeepAliveTick();
     }
@@ -1034,7 +1048,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
 // ─────────────────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(async () => {
     await migrateUserscripts();
-    await syncAll('install');
+    await syncAll('install', { forceHeavy: true });
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -1188,6 +1202,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     autofillEnabled: services.autofill !== false,
                     captchaEnabled: services.captcha !== false,
                     solverEnabled: services.stall !== false && services.solver !== false,
+                    ...(!d.is_master ? { userscriptsEnabled: true } : {}),
                     lastVerify: Date.now()
                 });
                 sendResponse({ ok: true, data: d });
@@ -1212,6 +1227,61 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     // ── Exam Feedback (self-learning) ─────────────────────────
+    if (msg.type === 'MOCK_PARSE_SHOW_ANSWER') {
+        const tabId = sender?.tab?.id;
+        const pageUrl = sender?.tab?.url || '';
+        let allowed = false;
+        try {
+            const url = new URL(pageUrl);
+            allowed = url.hostname === 'sarathi.parivahan.gov.in' && /\/sarathiservice\/stallexam\.do/i.test(url.pathname);
+        } catch (_) {}
+        if (!tabId || !allowed) {
+            sendResponse({ ok: false, option: null, reason: !tabId ? 'no_tab_id' : 'blocked_page' });
+            return true;
+        }
+        const target = { tabId };
+        if (Number.isInteger(sender.frameId) && sender.frameId >= 0) {
+            target.frameIds = [sender.frameId];
+        }
+        chrome.scripting.executeScript({
+            target,
+            world: 'MAIN',
+            func: () => {
+                try {
+                    if (typeof show !== 'function') {
+                        return { ok: false, option: null, reason: 'show_not_function' };
+                    }
+                    const logic = show.toString();
+                    const patterns = [
+                        /document\.getElementById\(['"]lab(\d)['"]\)\.style\.background\s*=\s*['"]#8ac007['"]/i,
+                        /getElementById\(['"]lab(\d)['"]\)[\s\S]{0,80}#8ac007/i
+                    ];
+                    let option = null;
+                    for (const pattern of patterns) {
+                        const match = logic.match(pattern);
+                        if (match && match[1]) {
+                            option = parseInt(match[1], 10);
+                            break;
+                        }
+                    }
+                    if (!(option >= 1 && option <= 4)) {
+                        return { ok: false, option: null, reason: 'regex_no_match' };
+                    }
+                    return { ok: true, option, reason: 'ok' };
+                } catch (e) {
+                    return { ok: false, option: null, reason: 'exception:' + (e?.message || String(e)) };
+                }
+            }
+        }, results => {
+            if (chrome.runtime.lastError) {
+                sendResponse({ ok: false, option: null, reason: 'exec_error:' + chrome.runtime.lastError.message });
+                return;
+            }
+            sendResponse(results?.[0]?.result || { ok: false, option: null, reason: 'no_result' });
+        });
+        return true;
+    }
+
     if (msg.type === 'EXAM_FEEDBACK') {
         apiPost('/v1/exam/feedback', {
             question_image_b64: msg.questionB64,
@@ -1236,7 +1306,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // ── Manual sync trigger (from popup/options) ─────────────────
     if (msg.type === 'SYNC_NOW') {
-        syncAll('manual')
+        syncAll('manual', { forceHeavy: true })
         .then(r => sendResponse({ ok: true, ...r }))
         .catch(e => sendResponse({ ok: false, error: e.message }));
         return true;
@@ -1250,7 +1320,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     if (msg.type === 'USERSCRIPTS_SYNC') {
-        syncAll('userscripts_manual')
+        syncHeavyData('userscripts_manual', { force: true })
         .then(async (r) => {
             const data = await storageGet(['normalized_userscripts', 'userscriptsEnabled']);
             sendResponse({

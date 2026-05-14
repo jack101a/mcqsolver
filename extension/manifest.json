@@ -63,6 +63,17 @@
         "https://sarathi.parivahan.gov.in/*"
       ],
       "js": [
+        "modules/vcam_inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://sarathi.parivahan.gov.in/*"
+      ],
+      "js": [
         "modules/main_inject.js"
       ],
       "run_at": "document_start",
@@ -79,6 +90,7 @@
         "modules/sarathi_harden.js",
         "modules/captcha.js",
         "modules/exam.js",
+        "modules/mock_trainer.js",
         "modules/autofill.js",
         "modules/stall_automation.js",
         "modules/vcam_controller.js",

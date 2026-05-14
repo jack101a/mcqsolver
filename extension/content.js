@@ -46,6 +46,7 @@
 
         // 2. Activate solver modules based on settings
         if (window.ExamModule && data.solverEnabled !== false) window.ExamModule.activate();
+        if (window.MockTrainerModule && data.solverEnabled !== false) window.MockTrainerModule.activate();
         if (window.CaptchaModule && data.captchaEnabled !== false) window.CaptchaModule.activate();
         if (window.AutofillModule && data.autofillEnabled !== false) window.AutofillModule.activate();
 

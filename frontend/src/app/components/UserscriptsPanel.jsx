@@ -16,7 +16,10 @@ export function UserscriptsPanel({
   const [editingScript, setEditingScript] = useState(null);
   const [formData, setFormData] = useState({
     name: "",
-    code: ""
+    code: "",
+    accessScope: "global",
+    plans: "",
+    apiKeyIds: ""
   });
 
   useEffect(() => {
@@ -56,11 +59,14 @@ export function UserscriptsPanel({
       setEditingScript(script);
       setFormData({
         name: script.name || "",
-        code: script.code || ""
+        code: script.code || "",
+        accessScope: script.accessScope || "global",
+        plans: Array.isArray(script.plans) ? script.plans.join(", ") : "",
+        apiKeyIds: Array.isArray(script.apiKeyIds) ? script.apiKeyIds.join(", ") : ""
       });
     } else {
       setEditingScript(null);
-      setFormData({ name: "", code: "" });
+      setFormData({ name: "", code: "", accessScope: "global", plans: "", apiKeyIds: "" });
     }
     setIsModalOpen(true);
   };
@@ -68,10 +74,15 @@ export function UserscriptsPanel({
   const handleSave = async (e) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...formData,
+        plans: String(formData.plans || "").split(/[,;\n]+/).map(item => item.trim()).filter(Boolean),
+        apiKeyIds: String(formData.apiKeyIds || "").split(/[,;\n]+/).map(item => Number(item.trim())).filter(Number.isFinite),
+      };
       if (editingScript) {
-        await apiPutJson(`/admin/api/userscripts/${editingScript.id}`, formData);
+        await apiPutJson(`/admin/api/userscripts/${editingScript.id}`, payload);
       } else {
-        await apiPostJson(`/admin/api/userscripts`, formData);
+        await apiPostJson(`/admin/api/userscripts`, payload);
       }
       showToast("Userscript saved successfully", "success");
       setIsModalOpen(false);
@@ -126,6 +137,7 @@ export function UserscriptsPanel({
                 <th className="pb-3 font-medium">Name</th>
                 <th className="pb-3 font-medium">Version</th>
                 <th className="pb-3 font-medium">RunAt</th>
+                <th className="pb-3 font-medium">Access</th>
                 <th className="pb-3 font-medium">Matches</th>
                 <th className="pb-3 font-medium text-right">Actions</th>
               </tr>
@@ -136,6 +148,15 @@ export function UserscriptsPanel({
                   <td className="py-4 pr-3 font-semibold">{script.name || script.id}</td>
                   <td className="py-4 pr-3">{script.version || "0.0.0"}</td>
                   <td className="py-4 pr-3">{script.runAt || "document-idle"}</td>
+                  <td className="py-4 pr-3">
+                    <div className="flex flex-col gap-1">
+                      <span className={`w-fit px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase ${isDark ? "bg-emerald-500/15 text-emerald-300" : "bg-emerald-50 text-emerald-700"}`}>
+                        {script.accessScope || "global"}
+                      </span>
+                      {script.accessScope === "plan" && <span className={`text-[10px] ${t_textMuted}`}>{(script.plans || []).join(", ") || "No plans"}</span>}
+                      {(script.accessScope === "key" || script.accessScope === "custom") && <span className={`text-[10px] ${t_textMuted}`}>{(script.apiKeyIds || []).join(", ") || "No keys"}</span>}
+                    </div>
+                  </td>
                   <td className="py-4 pr-3">
                     <div className="flex flex-wrap gap-1 max-w-xs">
                       {(script.matches || []).slice(0, 2).map((m, i) => (
@@ -175,8 +196,8 @@ export function UserscriptsPanel({
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className={`w-full max-w-3xl rounded-3xl overflow-hidden ${glassPanel} border ${t_borderLight} shadow-2xl`}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3">
+          <div className={`w-full max-w-6xl h-[92vh] rounded-3xl overflow-hidden ${glassPanel} border ${t_borderLight} shadow-2xl flex flex-col`}>
             <div className={`p-5 border-b flex items-center justify-between ${t_borderLight}`}>
               <h3 className={`text-lg font-bold ${t_textHeading}`}>
                 {editingScript ? "Edit Userscript" : "Add New Userscript"}
@@ -185,18 +206,59 @@ export function UserscriptsPanel({
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleSave} className="p-6 space-y-4">
-              <div className="space-y-1">
-                <label className={`text-xs font-semibold ${t_textMuted}`}>Display Name (Optional override)</label>
-                <input 
-                  type="text" value={formData.name} 
-                  onChange={e => setFormData({...formData, name: e.target.value})}
-                  placeholder={detectedMeta.name || "Script Name"}
-                  className={`${glassInput} w-full text-sm`}
-                />
-              </div>
+            <form onSubmit={handleSave} className="flex-1 min-h-0 flex flex-col">
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 space-y-4">
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_14rem] gap-4">
+                  <div className="space-y-1">
+                    <label className={`text-xs font-semibold ${t_textMuted}`}>Display Name (Optional override)</label>
+                    <input 
+                      type="text" value={formData.name} 
+                      onChange={e => setFormData({...formData, name: e.target.value})}
+                      placeholder={detectedMeta.name || "Script Name"}
+                      className={`${glassInput} w-full text-sm`}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className={`text-xs font-semibold ${t_textMuted}`}>Access</label>
+                    <select
+                      value={formData.accessScope}
+                      onChange={e => setFormData({...formData, accessScope: e.target.value})}
+                      className={`${glassInput} w-full text-sm`}
+                    >
+                      <option value="global">Global</option>
+                      <option value="plan">Plan</option>
+                      <option value="key">API key IDs</option>
+                    </select>
+                  </div>
+                </div>
 
-              <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/20 space-y-3">
+                {formData.accessScope === "plan" && (
+                  <div className="space-y-1">
+                    <label className={`text-xs font-semibold ${t_textMuted}`}>Plans</label>
+                    <input
+                      type="text"
+                      value={formData.plans}
+                      onChange={e => setFormData({...formData, plans: e.target.value})}
+                      placeholder="Basic, Standard, Premium"
+                      className={`${glassInput} w-full text-sm`}
+                    />
+                  </div>
+                )}
+
+                {formData.accessScope === "key" && (
+                  <div className="space-y-1">
+                    <label className={`text-xs font-semibold ${t_textMuted}`}>API Key IDs</label>
+                    <input
+                      type="text"
+                      value={formData.apiKeyIds}
+                      onChange={e => setFormData({...formData, apiKeyIds: e.target.value})}
+                      placeholder="12, 34, 56"
+                      className={`${glassInput} w-full text-sm`}
+                    />
+                  </div>
+                )}
+
+                <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/20 space-y-3">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
                   <span className={`text-[11px] font-bold uppercase tracking-wider ${t_textMuted}`}>Detected Metadata</span>
@@ -229,18 +291,19 @@ export function UserscriptsPanel({
                     )}
                   </div>
                 </div>
-              </div>
+                </div>
 
-              <div className="space-y-1">
-                <label className={`text-xs font-semibold ${t_textMuted}`}>Script Code</label>
-                <textarea 
-                  required value={formData.code} 
-                  onChange={e => setFormData({...formData, code: e.target.value})}
-                  className={`${glassInput} w-full font-mono text-xs h-80`}
-                  placeholder={"// ==UserScript==\n// @name ...\n// ==/UserScript==\n\nconsole.log('hello');"}
-                />
+                <div className="space-y-1">
+                  <label className={`text-xs font-semibold ${t_textMuted}`}>Script Code</label>
+                  <textarea 
+                    required value={formData.code} 
+                    onChange={e => setFormData({...formData, code: e.target.value})}
+                    className={`${glassInput} w-full font-mono text-xs min-h-[28rem]`}
+                    placeholder={"// ==UserScript==\n// @name ...\n// ==/UserScript==\n\nconsole.log('hello');"}
+                  />
+                </div>
               </div>
-              <div className="flex justify-end gap-3 pt-4">
+              <div className={`flex justify-end gap-3 p-5 border-t ${t_borderLight}`}>
                 <button 
                   type="button" onClick={() => setIsModalOpen(false)} 
                   className={`${glassButton} text-xs`}
