@@ -157,6 +157,19 @@ function renderServiceList(data) {
     return String(services || '-');
 }
 
+function entitlementServices(data) {
+    const services = firstValue(data, ['enabledServices', 'services', 'subscribedServices'], {});
+    return services && typeof services === 'object' && !Array.isArray(services) ? services : {};
+}
+
+function applyUserEntitlement(input, entitled, enabled, storageKey) {
+    if (!input) return;
+    input.checked = !!entitled && enabled !== false;
+    input.disabled = !entitled;
+    input.title = entitled ? '' : 'Disabled by admin';
+    if (!entitled) chrome.storage.local.set({ [storageKey]: false });
+}
+
 function renderUserOptions(data) {
     document.body.classList.add('user-mode');
     const view = el('user-options-view');
@@ -180,17 +193,18 @@ function renderUserOptions(data) {
     const autofill = el('user-opt-autofill');
     const captcha = el('user-opt-captcha');
     const stall = el('user-opt-stall');
+    const services = entitlementServices(data);
     if (autofill) {
-        autofill.checked = data.autofillEnabled !== false;
-        autofill.onchange = e => chrome.storage.local.set({ autofillEnabled: e.target.checked });
+        applyUserEntitlement(autofill, services.autofill !== false, data.autofillEnabled, 'autofillEnabled');
+        autofill.onchange = e => { if (!e.target.disabled) chrome.storage.local.set({ autofillEnabled: e.target.checked }); };
     }
     if (captcha) {
-        captcha.checked = data.captchaEnabled !== false;
-        captcha.onchange = e => chrome.storage.local.set({ captchaEnabled: e.target.checked });
+        applyUserEntitlement(captcha, services.captcha !== false, data.captchaEnabled, 'captchaEnabled');
+        captcha.onchange = e => { if (!e.target.disabled) chrome.storage.local.set({ captchaEnabled: e.target.checked }); };
     }
     if (stall) {
-        stall.checked = data.solverEnabled !== false;
-        stall.onchange = e => chrome.storage.local.set({ solverEnabled: e.target.checked });
+        applyUserEntitlement(stall, services.stall !== false && services.solver !== false, data.solverEnabled, 'solverEnabled');
+        stall.onchange = e => { if (!e.target.disabled) chrome.storage.local.set({ solverEnabled: e.target.checked }); };
     }
 }
 

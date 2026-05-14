@@ -12,7 +12,7 @@ window.onunhandledrejection = function (ev) {
     console.error('[Popup Unhandled Rejection]', ev.reason);
 };
 
-const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'userscriptsEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'profiles', 'activeProfileId', 'isRecording', 'theme'];
+const KEYS = ['captchaEnabled', 'solverEnabled', 'autofillEnabled', 'userscriptsEnabled', 'apiKey', 'serverUrl', 'isMaster', 'keyName', 'expiresAt', 'enabledServices', 'profiles', 'activeProfileId', 'isRecording', 'theme'];
 
 function el(id) { return document.getElementById(id); }
 function escapeHtml(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
@@ -155,6 +155,21 @@ async function handleLogin() {
     }
 }
 
+function servicesFrom(data) {
+    return (data && data.enabledServices && typeof data.enabledServices === 'object' && !Array.isArray(data.enabledServices))
+        ? data.enabledServices
+        : {};
+}
+
+function applyEntitledToggle(inputId, entitled, enabled, storageKey) {
+    const input = el(inputId);
+    if (!input) return;
+    input.checked = !!entitled && enabled !== false;
+    input.disabled = !entitled;
+    input.title = entitled ? '' : 'Disabled by admin';
+    if (!entitled) chrome.storage.local.set({ [storageKey]: false });
+}
+
 async function handleLogout() {
     await wipeSyncedData();
     showView('view-auth');
@@ -238,10 +253,11 @@ async function initProfiles(prefix, data) {
 }
 
 function setupUserUI(data) {
-    el('user-tog-autofill').checked = data.autofillEnabled !== false;
-    el('user-tog-captcha').checked = data.captchaEnabled !== false;
-    el('user-tog-exam').checked = data.solverEnabled !== false;
-    el('user-tog-userscripts').checked = data.userscriptsEnabled !== false;
+    const services = servicesFrom(data);
+    applyEntitledToggle('user-tog-autofill', services.autofill !== false, data.autofillEnabled, 'autofillEnabled');
+    applyEntitledToggle('user-tog-captcha', services.captcha !== false, data.captchaEnabled, 'captchaEnabled');
+    applyEntitledToggle('user-tog-exam', services.stall !== false && services.solver !== false, data.solverEnabled, 'solverEnabled');
+    applyEntitledToggle('user-tog-userscripts', services.custom === true, data.userscriptsEnabled, 'userscriptsEnabled');
     el('user-expiry').textContent = calculateExpiry(data.expiresAt);
     el('user-key-name').textContent = data.keyName || 'Active User';
     
@@ -301,10 +317,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('btn-master-logout').addEventListener('click', handleLogout);
 
     // Toggles - User
-    el('user-tog-autofill').addEventListener('change', e => chrome.storage.local.set({ autofillEnabled: e.target.checked }));
-    el('user-tog-captcha').addEventListener('change', e => chrome.storage.local.set({ captchaEnabled: e.target.checked }));
-    el('user-tog-exam').addEventListener('change', e => chrome.storage.local.set({ solverEnabled: e.target.checked }));
-    el('user-tog-userscripts').addEventListener('change', e => chrome.storage.local.set({ userscriptsEnabled: e.target.checked }));
+    el('user-tog-autofill').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ autofillEnabled: e.target.checked }); });
+    el('user-tog-captcha').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ captchaEnabled: e.target.checked }); });
+    el('user-tog-exam').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ solverEnabled: e.target.checked }); });
+    el('user-tog-userscripts').addEventListener('change', e => { if (!e.target.disabled) chrome.storage.local.set({ userscriptsEnabled: e.target.checked }); });
 
     // Toggles - Master
     el('tog-autofill').addEventListener('change', e => chrome.storage.local.set({ autofillEnabled: e.target.checked }));

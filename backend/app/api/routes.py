@@ -64,6 +64,19 @@ def _ensure_master_key(request: Request) -> None:
         raise HTTPException(403, "Master key required for this administrative action.")
 
 
+def _ensure_service_allowed(request: Request, service: str) -> None:
+    """Raise 403 when the current key is not entitled to a service."""
+    key_record = request.state.api_key_record
+    if not key_record:
+        raise HTTPException(401, "API key required")
+    if key_record.get("key_type") == "master":
+        return
+    entitlements = request.app.state.container.db.get_api_key_entitlements(int(key_record["id"]))
+    services = entitlements.get("services") or {}
+    if services.get(service) is False:
+        raise HTTPException(403, f"{service} service is not enabled for this API key")
+
+
 def _prune_report_buckets() -> None:
     """Remove expired entries from _report_buckets to prevent memory leaks."""
     global _last_prune
@@ -112,6 +125,7 @@ async def sync_userscripts(request: Request) -> dict:
     - Optional index file in data/userscripts or data/mappings
     - Fallback: all *.user.js files in the first populated source directory
     """
+    _ensure_service_allowed(request, "custom")
     root = get_project_root()
     candidate_dirs = [
         (root / "data" / "userscripts").resolve(),
@@ -216,6 +230,7 @@ async def sync_userscripts(request: Request) -> dict:
 @router.post("/solve", response_model=SolveResponse)
 async def solve(request: Request, payload: SolveRequest) -> SolveResponse:
     """Solve a text captcha image using the ONNX OCR model."""
+    _ensure_service_allowed(request, "captcha")
     container     = request.app.state.container
     key_record    = request.state.api_key_record
     client_ip     = request.client.host if request.client else None
@@ -268,6 +283,7 @@ async def solve(request: Request, payload: SolveRequest) -> SolveResponse:
 @router.post("/report")
 async def report(request: Request, payload: ReportRequest) -> dict:
     """Upload a failed captcha image for retraining."""
+    _ensure_service_allowed(request, "captcha")
     container  = request.app.state.container
     key_record = request.state.api_key_record
     key_id     = int(key_record["id"])
@@ -310,6 +326,7 @@ async def report(request: Request, payload: ReportRequest) -> dict:
 
 @router.post("/exam/solve", response_model=ExamSolveResponse)
 async def exam_solve(request: Request, payload: ExamSolveRequest) -> ExamSolveResponse:
+    _ensure_service_allowed(request, "solver")
     """
     Solve an MCQ question from the Sarathi exam portal.
     Extension sends base64 question image + 4 option images.
@@ -364,6 +381,7 @@ async def exam_solve(request: Request, payload: ExamSolveRequest) -> ExamSolveRe
 
 @router.post("/exam/feedback", response_model=ExamFeedbackResponse)
 async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamFeedbackResponse:
+    _ensure_service_allowed(request, "solver")
     """
     Receive per-question correctness feedback from the extension.
     When learning is enabled and answer was correct, the question is
@@ -476,6 +494,7 @@ async def autofill_fill(request: Request, payload: AutofillFillRequest) -> Autof
     Resolve form field selectors to fill values.
     profile_data is sent by the extension from local storage (not persisted here).
     """
+    _ensure_service_allowed(request, "autofill")
     container  = request.app.state.container
     key_record = request.state.api_key_record
     client_ip  = request.client.host if request.client else None
@@ -508,6 +527,7 @@ async def autofill_fill(request: Request, payload: AutofillFillRequest) -> Autof
 @router.get("/autofill/routes")
 async def autofill_routes(request: Request) -> dict:
     """Return all approved field mapping routes for extension sync."""
+    _ensure_service_allowed(request, "autofill")
     container = request.app.state.container
     return container.autofill_service.get_all_routes()
 
@@ -515,6 +535,7 @@ async def autofill_routes(request: Request) -> dict:
 @router.get("/autofill/routes/{domain}")
 async def autofill_domain_routes(request: Request, domain: str) -> dict:
     """Return field mapping routes for a specific domain."""
+    _ensure_service_allowed(request, "autofill")
     container  = request.app.state.container
     normalized = Database._normalize_domain(domain)
     return container.autofill_service.get_field_routes(normalized)
@@ -542,6 +563,7 @@ async def autofill_rule_proposals(request: Request, payload: AutofillRuleProposa
 @router.get("/autofill/sync", response_model=AutofillRuleSyncResponse)
 async def autofill_sync(request: Request) -> AutofillRuleSyncResponse:
     """Extension downloads approved rules (V26 engine) for local playback."""
+    _ensure_service_allowed(request, "autofill")
     container = request.app.state.container
     approved_rows = container.db.get_approved_autofill_rules()
 
@@ -620,6 +642,7 @@ return {{ ok: true, step: 'stall-flow' }};
 @router.get("/automation/payload/{step_id}")
 async def get_automation_payload(request: Request, step_id: str) -> dict:
     """Serve stateless automation scripts for STALL payloads."""
+    _ensure_service_allowed(request, "stall")
     # Key validation is already handled by AuthMiddleware.
     # We only allow specific step_ids to prevent arbitrary file reading.
     if step_id not in _AUTOMATION_SCRIPT_IDS:
