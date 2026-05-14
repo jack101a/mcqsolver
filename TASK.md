@@ -4,7 +4,7 @@
 Answer whether learned pHash data is used immediately or waits for confidence/verification, then commit and push current code to `sa_helper/before-scale`.
 
 ## Status
-IN PROGRESS
+COMPLETE
 
 ## Scope Included
 - Inspect the backend exam learning decision path.
@@ -20,7 +20,7 @@ IN PROGRESS
 - [x] Inspect learned pHash solve path.
 - [x] Run verification checks.
 - [x] Stage intended files.
-- [ ] Commit and push.
+- [x] Commit and push.
 
 ## Verification Approach
 - Use targeted `rg`/file reads for learning thresholds.
@@ -40,3 +40,7 @@ IN PROGRESS
 ## Staging Result
 - Staged extension source, rebuilt extension artifacts, and task/state files.
 - Left `backend/logs/app.db*` unstaged as runtime data.
+
+## Commit And Push Result
+- Committed as `e354d40` (`Fix STALL no-answer fallback and keepalive`).
+- Pushed `before-scale` to `sa_helper`.
