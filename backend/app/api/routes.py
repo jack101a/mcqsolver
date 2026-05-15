@@ -9,11 +9,12 @@ import re
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 from app.core.paths import get_project_root
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.core.database import Database
 from app.core.security import is_valid_base64
@@ -106,6 +107,144 @@ def _allow_report(key_id: int, domain: str) -> bool:
         return False
     q.append(now)
     return True
+
+
+def _write_json_atomic(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
+
+
+def _save_exam_offline_dataset(
+    *,
+    question_image,
+    option_images: list[object | None],
+    question_hash: str,
+    question_phash: str,
+    question_text: str,
+    option_texts: list[str],
+    option_hashes: list[str],
+    option_phashes: list[str],
+    correct_option: int,
+    correct_option_hash: str,
+    correct_option_phash: str,
+    correct_option_text: str,
+    domain: str | None,
+    method: str | None,
+    question_num: int | None,
+    learn_result: dict,
+) -> Path:
+    dataset_root = (_PROJECT_ROOT / "data" / "exam_offline").resolve()
+    folder_name = re.sub(r"[^A-Za-z0-9._-]+", "_", question_hash).strip("_") or uuid.uuid4().hex
+    question_dir = dataset_root / "questions" / folder_name
+    question_dir.mkdir(parents=True, exist_ok=True)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    question_rel = f"questions/{folder_name}/question.png"
+    question_image.save(dataset_root / question_rel, format="PNG")
+
+    options = []
+    for idx, opt_img in enumerate(option_images, start=1):
+        rel_path = ""
+        if opt_img is not None:
+            rel_path = f"questions/{folder_name}/option_{idx}.png"
+            opt_img.save(dataset_root / rel_path, format="PNG")
+        options.append({
+            "option": idx,
+            "image": rel_path,
+            "text": option_texts[idx - 1] if idx - 1 < len(option_texts) else "",
+            "hash": option_hashes[idx - 1] if idx - 1 < len(option_hashes) else "",
+            "phash": option_phashes[idx - 1] if idx - 1 < len(option_phashes) else "",
+            "is_correct": idx == correct_option,
+        })
+
+    metadata = {
+        "schema_version": 1,
+        "saved_at": now_iso,
+        "question_hash": question_hash,
+        "question_phash": question_phash,
+        "question_num": question_num,
+        "domain": domain,
+        "source": "exam_feedback",
+        "method": method,
+        "question_image": question_rel,
+        "question_text": question_text,
+        "options": options,
+        "answer": {
+            "correct_option": correct_option,
+            "correct_option_hash": correct_option_hash,
+            "correct_option_phash": correct_option_phash,
+            "correct_option_text": correct_option_text,
+        },
+        "learning": {
+            "action": learn_result.get("action"),
+            "confidence": learn_result.get("confidence"),
+            "seen_count": learn_result.get("seen_count"),
+            "verified_count": learn_result.get("verified_count"),
+            "status": learn_result.get("status"),
+        },
+    }
+    _write_json_atomic(question_dir / "metadata.json", metadata)
+
+    index_path = dataset_root / "index.json"
+    try:
+        with index_path.open("r", encoding="utf-8") as f:
+            index = json.load(f)
+    except Exception:
+        index = {"schema_version": 1, "created_at": now_iso, "questions": {}}
+    if not isinstance(index, dict):
+        index = {"schema_version": 1, "created_at": now_iso, "questions": {}}
+    questions = index.setdefault("questions", {})
+    if not isinstance(questions, dict):
+        questions = {}
+        index["questions"] = questions
+
+    previous = questions.get(question_hash) if isinstance(questions.get(question_hash), dict) else {}
+    questions[question_hash] = {
+        **previous,
+        "question_hash": question_hash,
+        "question_phash": question_phash,
+        "folder": f"questions/{folder_name}",
+        "metadata": f"questions/{folder_name}/metadata.json",
+        "question_image": question_rel,
+        "option_images": [opt["image"] for opt in options],
+        "correct_option": correct_option,
+        "correct_option_hash": correct_option_hash,
+        "correct_option_phash": correct_option_phash,
+        "domain": domain,
+        "question_num": question_num,
+        "confidence": learn_result.get("confidence"),
+        "seen_count": learn_result.get("seen_count"),
+        "verified_count": learn_result.get("verified_count"),
+        "status": learn_result.get("status"),
+        "last_saved_at": now_iso,
+        "created_at": previous.get("created_at", now_iso),
+    }
+    index["updated_at"] = now_iso
+    _write_json_atomic(index_path, index)
+    return question_dir
+
+
+def _save_exam_offline_dataset_safe(**kwargs) -> None:
+    try:
+        saved_dir = _save_exam_offline_dataset(**kwargs)
+        logger.info("exam_feedback_offline_saved", extra={
+            "context": {
+                "hash": str(kwargs.get("question_hash", ""))[:12],
+                "path": str(saved_dir),
+            }
+        })
+    except Exception as e:
+        logger.warning("exam_feedback_offline_save_failed", extra={"context": {"error": str(e)}})
+
+
+def _export_learned_to_json_safe(container) -> None:
+    try:
+        container.exam_service.export_learned_to_json()
+    except Exception as e:
+        logger.warning("exam_feedback_export_failed", extra={"context": {"error": str(e)}})
 
 
 def _userscript_sync_status(meta: dict) -> str:
@@ -472,7 +611,11 @@ async def exam_solve(request: Request, payload: ExamSolveRequest) -> ExamSolveRe
 
 
 @router.post("/exam/feedback", response_model=ExamFeedbackResponse)
-async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamFeedbackResponse:
+async def exam_feedback(
+    request: Request,
+    payload: ExamFeedbackRequest,
+    background_tasks: BackgroundTasks,
+) -> ExamFeedbackResponse:
     _ensure_service_allowed(request, "solver")
     """
     Receive per-question correctness feedback from the extension.
@@ -522,6 +665,7 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
         return ExamFeedbackResponse(recorded=True, learned=False, message=msg)
 
     # OCR the question and options for text storage
+    opt_images: list[object | None] = []
     try:
         from app.services.exam_service import ExamService
         opt_texts = []
@@ -530,10 +674,12 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
         for opt_b64 in payload.option_images_b64:
             try:
                 opt_img = _b64_to_pil(opt_b64)
+                opt_images.append(opt_img)
                 opt_hashes.append(_djb2_hash(opt_img))
                 opt_phashes.append(_phash(opt_img))
                 opt_texts.append(ExamService._ocr_text_static(opt_img))
             except Exception:
+                opt_images.append(None)
                 opt_hashes.append("")
                 opt_phashes.append("")
                 opt_texts.append("")
@@ -544,6 +690,8 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
         opt_texts = ["", "", "", ""]
         opt_hashes = ["", "", "", ""]
         opt_phashes = ["", "", "", ""]
+        if not opt_images:
+            opt_images = [None] * len(payload.option_images_b64)
 
     correct_index = int(payload.selected_option) - 1
     correct_option_text = opt_texts[correct_index] if 0 <= correct_index < len(opt_texts) else ""
@@ -579,11 +727,28 @@ async def exam_feedback(request: Request, payload: ExamFeedbackRequest) -> ExamF
         }
     })
 
+    background_tasks.add_task(
+        _save_exam_offline_dataset_safe,
+        question_image=q_img,
+        option_images=opt_images,
+        question_hash=question_hash,
+        question_phash=question_phash,
+        question_text=question_text,
+        option_texts=opt_texts,
+        option_hashes=opt_hashes,
+        option_phashes=opt_phashes,
+        correct_option=payload.selected_option,
+        correct_option_hash=correct_option_hash,
+        correct_option_phash=correct_option_phash,
+        correct_option_text=correct_option_text,
+        domain=payload.domain,
+        method=payload.method,
+        question_num=payload.question_num,
+        learn_result=result,
+    )
+
     # Export learned questions to JSON (fire-and-forget)
-    try:
-        container.exam_service.export_learned_to_json()
-    except Exception as e:
-        logger.warning("exam_feedback_export_failed", extra={"context": {"error": str(e)}})
+    background_tasks.add_task(_export_learned_to_json_safe, container)
 
     return ExamFeedbackResponse(
         recorded=True,

@@ -1233,7 +1233,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         let allowed = false;
         try {
             const url = new URL(pageUrl);
-            allowed = url.hostname === 'sarathi.parivahan.gov.in' && /\/sarathiservice\/stallexam\.do/i.test(url.pathname);
+            allowed = url.hostname === 'sarathi.parivahan.gov.in';
         } catch (_) {}
         if (!tabId || !allowed) {
             sendResponse({ ok: false, option: null, reason: !tabId ? 'no_tab_id' : 'blocked_page' });

@@ -1,32 +1,28 @@
-# TASK.md - Verify Docker Readiness And Push
+# TASK.md - Docker Friendliness Audit
 
 ## Goal
-Verify the current codebase is ready for Docker/startup usage, then commit and push source changes to `sa_helper/before-scale`.
+Verify whether the current codebase remains Docker-friendly after recent changes.
 
 ## Status
 COMPLETE
 
 ## Scope Included
-- Run backend/frontend/extension verification commands.
-- Repackage extension artifacts.
-- Stage source/config/artifact changes only.
-- Leave runtime DB/log backup files and `trainee.zip` out of git.
-- Commit and push to `sa_helper/before-scale`.
+- Validate Docker-related files are present and internally consistent.
+- Validate Docker compose YAML syntax.
+- Check Dockerfile referenced paths exist in repository.
+- Report compatibility risks and operational caveats.
 
 ## Scope Excluded
-- No Docker image build unless verification reveals a Docker-specific failure.
-- No runtime DB commit.
+- No container runtime build/run (Docker CLI is unavailable in this environment).
+- No application logic changes.
 
 ## Plan
-- [x] Verify backend compile and frontend build.
-- [x] Verify extension JS syntax and package extension.
-- [x] Stage intended files only.
-- [x] Commit and push.
+- [x] Read orchestration files (`Dockerfile`, compose files, entrypoint).
+- [x] Check filesystem paths referenced by Dockerfile.
+- [x] Validate compose files parse as YAML.
+- [x] Summarize Docker readiness and caveats.
 - [x] Update `STATE.md`.
 
 ## Verification Approach
-- `python -m py_compile` for changed backend files.
-- `npm run build` in frontend.
-- `node --check` for changed extension JS.
-- `ExtensionService.package_extension()`.
-- `git status --short` before and after staging.
+- Parse compose files with Python `yaml.safe_load`.
+- Verify required files/directories exist via PowerShell `Test-Path`.

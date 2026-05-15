@@ -3,7 +3,8 @@
     'use strict';
 
     window.MockTrainerModule = (() => {
-        const MOCK_PATH = /\/sarathiservice\/stallexam\.do/i;
+        const MOCK_EXAM_PATH = /\/sarathiservice\/stallexam\.do/i;
+        const MOCK_LOGIN_PATH = /\/sarathiservice\/stallLoginSubmit\.do/i;
         const CFG = {
             POLL_MS: 900,
             PARSE_RETRY_MS: 250,
@@ -21,8 +22,37 @@
         let lastQuestionKey = '';
         let loginSubmitted = false;
 
+        function isSarathiHost() {
+            return location.hostname === 'sarathi.parivahan.gov.in';
+        }
+
+        function hasLoginFormDom() {
+            return !!(
+                document.getElementById('stallLoginSubmit_ApplicantName')
+                && document.getElementById('dob')
+                && document.getElementById('sel')
+                && document.getElementById('mockstate')
+            );
+        }
+
+        function hasMockQuestionDom() {
+            return !!(
+                (getQImageEl() || getQuestionText().length > 0)
+                && getOptionSlots().length >= 4
+            );
+        }
+
         function isMockPage() {
-            return location.hostname === 'sarathi.parivahan.gov.in' && MOCK_PATH.test(location.pathname);
+            return isSarathiHost() && (
+                MOCK_LOGIN_PATH.test(location.pathname)
+                || MOCK_EXAM_PATH.test(location.pathname)
+                || hasLoginFormDom()
+                || hasMockQuestionDom()
+            );
+        }
+
+        function isMockExamPage() {
+            return isSarathiHost() && (MOCK_EXAM_PATH.test(location.pathname) || hasMockQuestionDom());
         }
 
         function sleep(ms) {
@@ -40,6 +70,8 @@
         }
 
         function getQNum() {
+            const hidden = parseInt(document.getElementById('examform_sno')?.value || '', 10);
+            if (Number.isFinite(hidden) && hidden > 0) return hidden;
             const text = document.querySelector('span.mytext1')?.innerText || '';
             const match = text.match(/\d+/);
             return match ? parseInt(match[0], 10) : 0;
@@ -49,14 +81,74 @@
             return document.querySelector('img[name="qframe"]');
         }
 
+        function getQuestionText() {
+            const selectors = [
+                '.question-text',
+                'td.quesText',
+                '#questionDiv',
+                '.qtext',
+                'td[class*="ques"]',
+                '.ques',
+                '[id*="question"]'
+            ];
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                const txt = (el?.innerText || '').trim();
+                if (txt.length > 4) return txt;
+            }
+            return '';
+        }
+
+        function getOptionSlots() {
+            const slots = [];
+            for (let i = 1; i <= 4; i++) {
+                const radio = getRadio(i);
+                if (!radio) continue;
+                const byLabel = radio.id ? document.querySelector(`label[for="${radio.id}"]`) : null;
+                const byLab = document.getElementById('lab' + i);
+                const container = byLab
+                    || byLabel
+                    || radio.closest('tr')
+                    || radio.closest('li')
+                    || radio.closest('.option')
+                    || radio.closest('.answer')
+                    || radio.parentElement;
+                slots.push({ option: i, radio, container });
+            }
+            return slots;
+        }
+
         function getOptionImageEls() {
-            return [1, 2, 3, 4].map(i => document.getElementById('choice' + i)).filter(Boolean);
+            const byChoice = [1, 2, 3, 4].map(i =>
+                document.getElementById('choice' + i)
+                || document.querySelector(`img[name="choice${i}"]`)
+            ).filter(Boolean);
+            if (byChoice.length >= 4) return byChoice;
+            const slots = getOptionSlots();
+            return slots.map(slot => slot.container?.querySelector('img')).filter(Boolean);
         }
 
         function imageToPayload(imgEl) {
             if (!imgEl || typeof window.up_imgToB64 !== 'function') return null;
             const dataUrl = window.up_imgToB64(imgEl);
             return dataUrl || null;
+        }
+
+        function textToPayload(text, prefix = '') {
+            const clean = String(text || '').replace(/\s+/g, ' ').trim();
+            if (!clean) return null;
+            const canvas = document.createElement('canvas');
+            canvas.width = 900;
+            canvas.height = 120;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#111';
+            ctx.font = '20px Arial';
+            const textLine = `${prefix}${clean}`.slice(0, 180);
+            ctx.fillText(textLine, 12, 68);
+            return canvas.toDataURL('image/png');
         }
 
         function getRadio(option) {
@@ -66,7 +158,8 @@
         }
 
         function getSubmitButton() {
-            return document.getElementById('confirmbut')
+            return document.getElementById('examform_confirm')
+                || document.getElementById('confirmbut')
                 || document.getElementById('submitbut')
                 || document.getElementById('nextbut')
                 || document.querySelector('button[type="submit"], input[type="submit"], input[type="button"]');
@@ -104,15 +197,30 @@
 
         async function trainCurrentQuestion() {
             const qImg = getQImageEl();
-            const optionEls = getOptionImageEls();
-            if (!qImg || optionEls.length < 4) return;
+            const qText = getQuestionText();
+            const slots = getOptionSlots();
+            if (slots.length < 4) {
+                console.log('[MockTrainer] waiting: less than 4 option slots');
+                return;
+            }
 
-            const qPayload = imageToPayload(qImg);
-            const optPayloads = optionEls.map(imageToPayload).filter(Boolean);
-            if (!qPayload || optPayloads.length < 4) return;
+            const qPayload = imageToPayload(qImg) || textToPayload(qText, 'Q: ');
+            const optPayloads = slots.map(slot => {
+                const img = slot.container?.querySelector('img')
+                    || document.getElementById('choice' + slot.option)
+                    || document.querySelector(`img[name="choice${slot.option}"]`);
+                const byImage = imageToPayload(img);
+                if (byImage) return byImage;
+                const txt = (slot.container?.innerText || '').replace(/\s+/g, ' ').trim();
+                return textToPayload(txt, `O${slot.option}: `);
+            }).filter(Boolean);
+            if (!qPayload || optPayloads.length < 4) {
+                console.log('[MockTrainer] waiting: missing payloads', { qPayload: !!qPayload, options: optPayloads.length });
+                return;
+            }
 
             const qNum = getQNum();
-            const key = `${qNum}|${qImg.src || qPayload.slice(0, 80)}`;
+            const key = `${qNum}|${qImg?.src || qPayload.slice(0, 80)}`;
             if (key === lastQuestionKey) return;
 
             processing = true;
@@ -161,7 +269,9 @@
             const language = document.getElementById('sel');
             const state = document.getElementById('mockstate');
             const radio = document.getElementById('radio1') || document.querySelector('input[name="examselection"][value="woaudio"]');
-            if (!name || !dob || !language || !state || !radio) return false;
+            if (!name || !dob || !language || !state || !radio) {
+                return false;
+            }
 
             setValue(name, CFG.DEFAULT_NAME);
             setValue(dob, CFG.DEFAULT_DOB);
@@ -170,6 +280,37 @@
             radio.checked = true;
             radio.dispatchEvent(new Event('click', { bubbles: true }));
             radio.dispatchEvent(new Event('change', { bubbles: true }));
+
+            // Fallback in page MAIN world (userscript-like context) for pages
+            // that ignore isolated-world value assignments.
+            await window.up_sendMsg('EXECUTE_IN_MAIN', {
+                id: 'mock_trainer_login_main_world',
+                code: `
+                    (function () {
+                        try {
+                            const set = (el, val) => {
+                                if (!el) return;
+                                el.focus();
+                                el.value = val;
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                                el.blur();
+                            };
+                            set(document.getElementById('stallLoginSubmit_ApplicantName'), 'darshan');
+                            set(document.getElementById('dob'), '01-02-2003');
+                            set(document.getElementById('sel'), 'HINDI');
+                            set(document.getElementById('mockstate'), 'MH');
+                            const radio = document.getElementById('radio1')
+                                || document.querySelector('input[name="examselection"][value="woaudio"]');
+                            if (radio) {
+                                radio.checked = true;
+                                radio.dispatchEvent(new Event('click', { bubbles: true }));
+                                radio.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        } catch (_) {}
+                    })();
+                `
+            }).catch(() => {});
 
             if (!loginSubmitted) {
                 loginSubmitted = true;
@@ -184,7 +325,7 @@
             if (processing || !isMockPage()) return;
             const settings = await window.up_getStorage(['solverEnabled', 'learningEnabled', 'mockTrainingEnabled']);
             if (settings.solverEnabled === false || settings.learningEnabled === false || settings.mockTrainingEnabled === false) return;
-            if (!getQImageEl()) {
+            if (!isMockExamPage()) {
                 await fillMockLogin();
                 return;
             }
@@ -193,7 +334,7 @@
 
         return {
             activate() {
-                if (!isMockPage()) return;
+                if (!isSarathiHost()) return;
                 if (interval) clearInterval(interval);
                 interval = setInterval(() => tick().catch(e => console.warn('[MockTrainer] tick failed:', e.message)), CFG.POLL_MS);
                 setTimeout(() => tick().catch(() => {}), 500);

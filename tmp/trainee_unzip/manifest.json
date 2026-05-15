@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "MCQ Solver Pro",
+  "version": "4.0.0",
+  "description": "Smart MCQ solver with Pass-Path strategy, Master Power switch, and Multi-AI support.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://sarathi.parivahan.gov.in/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://sarathi.parivahan.gov.in/*"],
+      "js": [
+        "modules/scraper.js",
+        "modules/dom-hints.js",
+        "modules/interactions.js",
+        "modules/ui.js",
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

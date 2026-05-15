@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        :root {
+            --bg: #f7f9fc;
+            --card: #ffffff;
+            --ink: #1f2a37;
+            --muted: #6b7280;
+            --line: #e5e7eb;
+            --accent: #0ea5e9;
+            --ok: #16a34a;
+            --warn: #d97706;
+            --bad: #dc2626;
+        }
+        body {
+            width: 280px;
+            margin: 0;
+            padding: 10px;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            font-size: 12px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }
+        .title {
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 6px 0;
+        }
+        .label { color: var(--muted); }
+        .value { font-weight: 700; }
+        .switch {
+            width: 36px;
+            height: 20px;
+            border-radius: 20px;
+            border: 1px solid var(--line);
+            background: #d1d5db;
+            position: relative;
+            cursor: pointer;
+        }
+        .switch input { display: none; }
+        .switch span {
+            position: absolute;
+            top: 1px;
+            left: 1px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #fff;
+            transition: 0.18s;
+            box-shadow: 0 1px 2px rgba(0,0,0,.15);
+        }
+        .switch input:checked + span {
+            transform: translateX(16px);
+            background: #fff;
+        }
+        .switch input:checked ~ .bg { background: var(--accent); }
+        .bg {
+            position: absolute;
+            inset: 0;
+            border-radius: 20px;
+            background: transparent;
+            transition: 0.18s;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+        }
+        .stat {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 6px;
+            text-align: center;
+        }
+        .stat .n { font-size: 14px; font-weight: 700; }
+        .stat .k { font-size: 10px; color: var(--muted); }
+        .btn {
+            width: 100%;
+            border: 1px solid var(--line);
+            background: #fff;
+            border-radius: 8px;
+            padding: 8px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .btn.primary {
+            border-color: #bae6fd;
+            background: #e0f2fe;
+            color: #075985;
+        }
+        .tiny { font-size: 10px; color: var(--muted); }
+        .status-ok { color: var(--ok); font-weight: 700; }
+        .status-bad { color: var(--bad); font-weight: 700; }
+        .input, .select, .textarea {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 6px 8px;
+            font-size: 12px;
+            box-sizing: border-box;
+            background: #fff;
+            color: var(--ink);
+        }
+        .textarea {
+            min-height: 58px;
+            resize: vertical;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 11px;
+        }
+        .field { margin-top: 6px; }
+        .field .label { display: block; margin-bottom: 4px; }
+        .inline-btns {
+            display: flex;
+            gap: 6px;
+        }
+        .inline-btns .btn { width: auto; flex: 1; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="title">MCQ Solver Compact</div>
+        <div class="row">
+            <span class="label">Extension</span>
+            <label class="switch">
+                <input id="power-switch" type="checkbox">
+                <span></span><i class="bg"></i>
+            </label>
+        </div>
+        <div class="row">
+            <span class="label">Phase 1 (show parse)</span>
+            <label class="switch">
+                <input id="phase1-switch" type="checkbox">
+                <span></span><i class="bg"></i>
+            </label>
+        </div>
+        <div class="row">
+            <span class="label">OCR (Phase 2)</span>
+            <label class="switch">
+                <input id="ocr-switch" type="checkbox">
+                <span></span><i class="bg"></i>
+            </label>
+        </div>
+        <div class="row">
+            <span class="label">API Fallback (Phase 3)</span>
+            <label class="switch">
+                <input id="api-switch" type="checkbox">
+                <span></span><i class="bg"></i>
+            </label>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="field">
+            <span class="label">Backend URL</span>
+            <div class="inline-btns">
+                <input id="backend-url-input" class="input" type="text" placeholder="http://127.0.0.1:8765">
+                <button id="save-url-btn" class="btn" style="width:auto">Save</button>
+            </div>
+        </div>
+        <div class="row"><span class="label">Status</span><span id="backend-status" class="status-bad">Offline</span></div>
+        <div class="row" style="margin-top:8px">
+            <span class="label">Auto Refresh</span>
+            <label class="switch">
+                <input id="auto-refresh-switch" type="checkbox">
+                <span></span><i class="bg"></i>
+            </label>
+        </div>
+        <button id="refresh-btn" class="btn" style="margin-top:8px">Refresh</button>
+    </div>
+
+    <div class="card">
+        <div class="stat-grid">
+            <div class="stat"><div class="n" id="s-score">0</div><div class="k">Score</div></div>
+            <div class="stat"><div class="n" id="s-wrong">0</div><div class="k">Wrong</div></div>
+            <div class="stat"><div class="n" id="s-timer">30</div><div class="k">Timer</div></div>
+        </div>
+        <div class="row" style="margin-top:8px">
+            <span class="label">Decision</span>
+            <span class="value" id="s-decision">CONTINUE</span>
+        </div>
+    </div>
+
+    <button id="solve-btn" class="btn primary">Force Solve</button>
+    <button id="reset-btn" class="btn" style="margin-top:6px">Reset Stats</button>
+
+    <script src="popup.js"></script>
+</body>
+</html>

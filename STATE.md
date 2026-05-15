@@ -1,24 +1,44 @@
-# STATE.md - Verify Docker Readiness And Push
+# STATE.md - Docker Friendliness Audit
 
 ## Status
 COMPLETE
 
 ## Active Task
-Verify current codebase for Docker/startup usage and push source changes to `sa_helper/before-scale`.
+Check whether the repository is still Docker-friendly after recent code changes.
 
 ## Last Files Modified
 - `TASK.md`
 - `STATE.md`
-- Backend source for userscript scoping and hybrid MCQ learned-answer identity.
-- Extension source for mock phase-1 trainer, sync cadence, VCam/keepalive/user-mode fixes.
-- Frontend admin userscript panel.
-- Rebuilt extension artifacts under `backend/app/static`.
 
 ## Last Command Run
-`git push sa_helper before-scale`
+`@'
+import sys
+from pathlib import Path
+try:
+    import yaml
+except Exception as e:
+    print('NO_PYYAML', e.__class__.__name__)
+    sys.exit(2)
+for p in ['docker-compose.yml','infra/docker-compose.yml']:
+    with open(p,'r',encoding='utf-8') as f:
+        yaml.safe_load(f)
+    print('OK', p)
+'@ | python -`
 
 ## Last Output/Error
-Push succeeded: `31a9ca0..86608e6 before-scale -> before-scale`. Verification before push passed: backend `py_compile`, frontend `npm run build`, extension `node --check`, and extension package rebuild.
+Compose parse output:
+- `OK docker-compose.yml`
+- `OK infra/docker-compose.yml`
+- Exit code `0`
+
+Additional checks completed:
+- Docker-related files exist (`Dockerfile`, compose files, `docker-entrypoint.sh`).
+- Dockerfile `COPY` path targets exist (`backend`, `frontend`, `extension`, `data`, `backend/requirements.txt`, frontend package files).
+- Runtime Docker command checks are blocked here because Docker CLI is not installed (`docker : The term 'docker' is not recognized`).
 
 ## Immediate Next Step
-Only runtime files remain local and unstaged: `backend/logs/app.db*`, backup JSON changes, and `trainee.zip`.
+If runtime verification is needed, run on a machine with Docker installed:
+- `docker compose config`
+- `docker build -t sa-helper-local .`
+- `docker compose up -d`
+- `docker compose ps` and `docker compose logs --tail=200 sa-helper`
