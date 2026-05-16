@@ -446,6 +446,12 @@ class TelegramBotService:
             )
             if sub:
                 plan = session.query(SubscriptionPlan).filter(SubscriptionPlan.id == sub.plan_id).first()
+                try:
+                    services_raw = json.loads(sub.services_snapshot_json or (plan.services_json if plan else "{}") or "{}")
+                except Exception:
+                    services_raw = {}
+                service_names = [name for name, enabled in services_raw.items() if enabled]
+                service_label = ", ".join(service_names) if service_names else "N/A"
                 from app.core.models import UsageCycle
                 cycle = (
                     session.query(UsageCycle)
@@ -459,6 +465,7 @@ class TelegramBotService:
                     f"📦 Plan: *{plan.name if plan else 'Unknown'}*\n"
                     f"📅 Expires: {sub.end_at.strftime('%d %b %Y') if sub.end_at else 'N/A'}\n"
                     f"📊 Usage: {used}/{limit} solves\n"
+                    f"Services: {service_label}\n"
                 )
             else:
                 status_msg += (

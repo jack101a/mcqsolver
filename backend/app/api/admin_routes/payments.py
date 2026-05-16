@@ -100,6 +100,8 @@ async def approve_payment(request: Request, payment_id: int) -> Any:
                     plan_id=plan.id,
                     status="active",
                     monthly_limit_snapshot=plan.monthly_limit,
+                    services_snapshot_json=plan.services_json or "{}",
+                    service_limits_snapshot_json=plan.service_limits_json or "{}",
                     start_at=now,
                     end_at=now + timedelta(days=plan.duration_days),
                     billing_anchor_day=now.day,
@@ -134,13 +136,17 @@ async def approve_payment(request: Request, payment_id: int) -> Any:
                 UserApiKey.status == "active",
             ).first()
             if not existing_key:
-                from app.services.user_key_service import UserKeyService
-                from app.core.config import get_settings
-                svc = UserKeyService(
-                    session_factory=lambda: session,
-                    settings=get_settings(),
-                )
-                svc.create_key(user_id=user.id)
+                from app.core.security import compute_expiry_datetime, generate_plain_api_key, hash_api_key
+                plain = generate_plain_api_key(container.settings)
+                session.add(UserApiKey(
+                    user_id=user.id,
+                    key_hash=hash_api_key(plain, container.settings.auth.hash_salt),
+                    key_prefix_display=plain[:10] + "...",
+                    status="active",
+                    key_version=1,
+                    issued_at=now,
+                    expires_at=compute_expiry_datetime(container.settings.auth.default_expiry_days),
+                ))
 
         # Commit everything atomically
         session.commit()

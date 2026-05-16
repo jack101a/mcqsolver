@@ -2,8 +2,19 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any
+from sqlalchemy import func
+
 from .base import BaseRepository
 from app.core.config import get_settings
+from app.core.db import get_session
+from app.core.models import (
+    ApiKeyAllowedDomainRecord,
+    ApiKeyDeviceBindingRecord,
+    ApiKeyRateLimitRecord,
+    ApiKeyRecord,
+    PlatformSettingRecord,
+    UsageEventRecord,
+)
 from app.core.security import hash_api_key
 
 class APIKeyRepository(BaseRepository):
@@ -27,8 +38,47 @@ class APIKeyRepository(BaseRepository):
             services[str(key)] = bool(enabled)
         return services
 
+    def _row_to_dict(self, row: ApiKeyRecord) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "name": row.name,
+            "key_hash": row.key_hash,
+            "enabled": row.enabled,
+            "all_domains": row.all_domains,
+            "created_at": row.created_at,
+            "expires_at": row.expires_at,
+            "revoked_at": row.revoked_at,
+            "key_type": row.key_type,
+            "plan_name": row.plan_name,
+            "mobile": row.mobile,
+            "telegram_id": row.telegram_id,
+            "services_json": row.services_json,
+        }
+
     def insert_api_key(self, name: str, key_hash: str, expires_at: str | None, key_type: str = "user") -> int:
         """Insert API key and return row id."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                row = ApiKeyRecord(
+                    name=name,
+                    key_hash=key_hash,
+                    key_type=key_type,
+                    enabled=1,
+                    created_at=now,
+                    expires_at=expires_at,
+                    revoked_at=None,
+                )
+                session.add(row)
+                session.commit()
+                session.refresh(row)
+                return int(row.id)
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self._lock:
             with self.connect() as conn:
                 now = datetime.now(timezone.utc).isoformat()
@@ -44,6 +94,13 @@ class APIKeyRepository(BaseRepository):
 
     def get_api_key_by_hash(self, key_hash: str) -> dict[str, Any] | None:
         """Fetch API key record by hash."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.query(ApiKeyRecord).filter(ApiKeyRecord.key_hash == key_hash).first()
+                return self._row_to_dict(row) if row else None
+            finally:
+                session.close()
         with self.connect() as conn:
             cursor = conn.execute(
                 "SELECT * FROM api_keys WHERE key_hash = ?",
@@ -54,6 +111,21 @@ class APIKeyRepository(BaseRepository):
 
     def revoke_api_key(self, key_hash: str) -> bool:
         """Disable API key hash."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.query(ApiKeyRecord).filter(ApiKeyRecord.key_hash == key_hash).first()
+                if not row:
+                    return False
+                row.enabled = 0
+                row.revoked_at = datetime.now(timezone.utc).isoformat()
+                session.commit()
+                return True
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self._lock:
             with self.connect() as conn:
                 now = datetime.now(timezone.utc).isoformat()
@@ -70,6 +142,21 @@ class APIKeyRepository(BaseRepository):
 
     def revoke_api_key_by_id(self, key_id: int) -> bool:
         """Disable API key by integer id."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyRecord, key_id)
+                if not row:
+                    return False
+                row.enabled = 0
+                row.revoked_at = datetime.now(timezone.utc).isoformat()
+                session.commit()
+                return True
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self._lock:
             with self.connect() as conn:
                 now = datetime.now(timezone.utc).isoformat()
@@ -123,6 +210,26 @@ class APIKeyRepository(BaseRepository):
         ip: str | None,
     ) -> None:
         """Persist usage event row."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                session.add(UsageEventRecord(
+                    key_id=key_id,
+                    task_type=task_type,
+                    status=status,
+                    processing_ms=processing_ms,
+                    model_used=model_used,
+                    domain=domain,
+                    ip=ip,
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                ))
+                session.commit()
+                return
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self._lock:
             with self.connect() as conn:
                 now = datetime.now(timezone.utc).isoformat()
@@ -137,6 +244,23 @@ class APIKeyRepository(BaseRepository):
 
     def get_usage_summary(self, key_id: int | None = None) -> dict[str, Any]:
         """Get usage summary, optionally filtered by key."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                query = session.query(UsageEventRecord)
+                if key_id is not None:
+                    query = query.filter(UsageEventRecord.key_id == key_id)
+                total = query.count()
+                success = query.filter(UsageEventRecord.status == "ok").count()
+                avg_ms = query.with_entities(func.coalesce(func.avg(UsageEventRecord.processing_ms), 0)).scalar()
+                return {
+                    "total_requests": int(total),
+                    "successful_requests": int(success),
+                    "failed_requests": int(total - success),
+                    "avg_processing_ms": float(avg_ms or 0),
+                }
+            finally:
+                session.close()
         with self.connect() as conn:
             query_base = "FROM usage_events"
             params: tuple[Any, ...] = ()
@@ -165,6 +289,18 @@ class APIKeyRepository(BaseRepository):
 
     def get_all_api_keys(self) -> list[dict[str, Any]]:
         """Get all API keys for admin view."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                rows = []
+                for row in session.query(ApiKeyRecord).order_by(ApiKeyRecord.id.desc()).all():
+                    item = self._row_to_dict(row)
+                    item["services"] = self._parse_services(item.get("services_json"))
+                    item.pop("services_json", None)
+                    rows.append(item)
+                return rows
+            finally:
+                session.close()
         with self.connect() as conn:
             rows = []
             for row in conn.execute(
@@ -183,6 +319,23 @@ class APIKeyRepository(BaseRepository):
 
     def set_api_key_domain_scope(self, key_id: int, all_domains: bool, domains: list[str] | None = None) -> None:
         clean_domains = sorted({self._normalize_domain(d) for d in (domains or []) if self._normalize_domain(d)})
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyRecord, key_id)
+                if row:
+                    row.all_domains = 1 if all_domains else 0
+                session.query(ApiKeyAllowedDomainRecord).filter(ApiKeyAllowedDomainRecord.key_id == key_id).delete()
+                if not all_domains:
+                    for domain in clean_domains:
+                        session.add(ApiKeyAllowedDomainRecord(key_id=key_id, domain=domain))
+                session.commit()
+                return
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self._lock:
             with self.connect() as conn:
                 conn.execute("UPDATE api_keys SET all_domains = ? WHERE id = ?", (1 if all_domains else 0, key_id))
@@ -196,6 +349,18 @@ class APIKeyRepository(BaseRepository):
                 conn.commit()
 
     def get_api_key_allowed_domains(self, key_id: int) -> list[str]:
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                rows = (
+                    session.query(ApiKeyAllowedDomainRecord)
+                    .filter(ApiKeyAllowedDomainRecord.key_id == key_id)
+                    .order_by(ApiKeyAllowedDomainRecord.domain.asc())
+                    .all()
+                )
+                return [str(row.domain) for row in rows]
+            finally:
+                session.close()
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT domain FROM api_key_allowed_domains WHERE key_id = ? ORDER BY domain ASC",
@@ -204,6 +369,28 @@ class APIKeyRepository(BaseRepository):
             return [str(row["domain"]) for row in rows]
 
     def is_domain_allowed_for_key(self, key_id: int, domain: str | None) -> bool:
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyRecord, key_id)
+                if not row:
+                    return False
+                if int(row.all_domains or 0) == 1:
+                    return True
+                for candidate in self._domain_candidates(domain):
+                    hit = (
+                        session.query(ApiKeyAllowedDomainRecord)
+                        .filter(
+                            ApiKeyAllowedDomainRecord.key_id == key_id,
+                            ApiKeyAllowedDomainRecord.domain == candidate,
+                        )
+                        .first()
+                    )
+                    if hit:
+                        return True
+                return False
+            finally:
+                session.close()
         with self.connect() as conn:
             row = conn.execute("SELECT all_domains FROM api_keys WHERE id = ?", (key_id,)).fetchone()
             if not row:
@@ -222,6 +409,22 @@ class APIKeyRepository(BaseRepository):
     def set_api_key_rate_limit(self, key_id: int, requests_per_minute: int, burst: int = 0) -> None:
         rpm = max(1, int(requests_per_minute))
         b = max(0, int(burst))
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyRateLimitRecord, key_id)
+                if row:
+                    row.requests_per_minute = rpm
+                    row.burst = b
+                else:
+                    session.add(ApiKeyRateLimitRecord(key_id=key_id, requests_per_minute=rpm, burst=b))
+                session.commit()
+                return
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self._lock:
             with self.connect() as conn:
                 conn.execute(
@@ -237,6 +440,15 @@ class APIKeyRepository(BaseRepository):
                 conn.commit()
 
     def get_api_key_rate_limit(self, key_id: int) -> dict[str, int] | None:
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyRateLimitRecord, key_id)
+                if not row:
+                    return None
+                return {"requests_per_minute": int(row.requests_per_minute), "burst": int(row.burst)}
+            finally:
+                session.close()
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT requests_per_minute, burst FROM api_key_rate_limits WHERE key_id = ?",
@@ -260,6 +472,22 @@ class APIKeyRepository(BaseRepository):
         clean_services = dict(self.DEFAULT_SERVICES)
         for name, enabled in (services or {}).items():
             clean_services[str(name)] = bool(enabled)
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyRecord, key_id)
+                if row:
+                    row.plan_name = str(plan_name or "Standard").strip() or "Standard"
+                    row.mobile = str(mobile or "").strip()
+                    row.telegram_id = str(telegram_id or "").strip()
+                    row.services_json = json.dumps(clean_services, separators=(",", ":"))
+                session.commit()
+                return
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self._lock:
             with self.connect() as conn:
                 conn.execute(
@@ -279,6 +507,25 @@ class APIKeyRepository(BaseRepository):
                 conn.commit()
 
     def get_api_key_entitlements(self, key_id: int) -> dict[str, Any]:
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyRecord, key_id)
+                if not row:
+                    return {
+                        "plan_name": "Standard",
+                        "mobile": "",
+                        "telegram_id": "",
+                        "services": dict(self.DEFAULT_SERVICES),
+                    }
+                return {
+                    "plan_name": row.plan_name or "Standard",
+                    "mobile": row.mobile or "",
+                    "telegram_id": row.telegram_id or "",
+                    "services": self._parse_services(row.services_json),
+                }
+            finally:
+                session.close()
         with self.connect() as conn:
             row = conn.execute(
                 """
@@ -312,6 +559,35 @@ class APIKeyRepository(BaseRepository):
         token = str(device_id or "").strip()
         if not token:
             return False
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                key_row = session.get(ApiKeyRecord, key_id)
+                if key_row and key_row.key_type == "master":
+                    return True
+                now = datetime.now(timezone.utc).isoformat()
+                row = session.get(ApiKeyDeviceBindingRecord, key_id)
+                if not row:
+                    session.add(ApiKeyDeviceBindingRecord(
+                        key_id=key_id,
+                        device_id=token,
+                        user_agent=(user_agent or "")[:512],
+                        first_seen_at=now,
+                        last_seen_at=now,
+                    ))
+                    session.commit()
+                    return True
+                if str(row.device_id) != token:
+                    return False
+                row.user_agent = (user_agent or "")[:512]
+                row.last_seen_at = now
+                session.commit()
+                return True
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
         with self.connect() as conn:
             key_row = conn.execute("SELECT key_type FROM api_keys WHERE id = ?", (key_id,)).fetchone()
             if key_row and key_row["key_type"] == "master":
@@ -347,6 +623,20 @@ class APIKeyRepository(BaseRepository):
                 return True
 
     def get_api_key_device_binding(self, key_id: int) -> dict[str, Any] | None:
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.get(ApiKeyDeviceBindingRecord, key_id)
+                if not row:
+                    return None
+                return {
+                    "device_id": row.device_id,
+                    "user_agent": row.user_agent,
+                    "first_seen_at": row.first_seen_at,
+                    "last_seen_at": row.last_seen_at,
+                }
+            finally:
+                session.close()
         with self.connect() as conn:
             row = conn.execute(
                 """
@@ -374,6 +664,55 @@ class APIKeyRepository(BaseRepository):
         row (no expiry) and saves the plaintext in platform_settings.
         Returns: { id, key, name }
         """
+        if self._use_sqlalchemy:
+            try:
+                session = get_session()
+            except RuntimeError:
+                session = None
+            if session is not None:
+                try:
+                    row_plain = session.get(PlatformSettingRecord, "master_api_key_plain")
+                    row_id = session.get(PlatformSettingRecord, "master_api_key_id")
+                    if row_plain and row_id:
+                        return {"id": int(row_id.value), "key": row_plain.value, "name": "Master Key"}
+
+                    import secrets
+                    raw = self._MASTER_KEY_PREFIX + secrets.token_hex(24)
+                    key_hash = hash_api_key(raw, get_settings().auth.hash_salt)
+                    now = datetime.now(timezone.utc).isoformat()
+                    key_row = ApiKeyRecord(
+                        name="Master Key",
+                        key_hash=key_hash,
+                        key_type="master",
+                        enabled=1,
+                        created_at=now,
+                        expires_at=None,
+                        revoked_at=None,
+                    )
+                    session.add(key_row)
+                    session.flush()
+                    for key, value in [
+                        ("master_api_key_plain", raw),
+                        ("master_api_key_id", str(key_row.id)),
+                    ]:
+                        existing = session.get(PlatformSettingRecord, key)
+                        if existing:
+                            existing.value = value
+                            existing.updated_at = now
+                        else:
+                            session.add(PlatformSettingRecord(
+                                key=key,
+                                value=value,
+                                description="Auto-managed - do not edit manually",
+                                updated_at=now,
+                            ))
+                    session.commit()
+                    return {"id": int(key_row.id), "key": raw, "name": "Master Key"}
+                except Exception:
+                    session.rollback()
+                    raise
+                finally:
+                    session.close()
         with self.connect() as conn:
             row_plain = conn.execute(
                 "SELECT value FROM platform_settings WHERE key = 'master_api_key_plain'"
@@ -392,7 +731,6 @@ class APIKeyRepository(BaseRepository):
 
         with self._lock:
             with self.connect() as conn:
-                from datetime import datetime, timezone
                 now = datetime.now(timezone.utc).isoformat()
                 cursor = conn.execute(
                     """
@@ -421,6 +759,20 @@ class APIKeyRepository(BaseRepository):
 
     def get_master_key_info(self) -> dict | None:
         """Return master key info if it exists, else None."""
+        if self._use_sqlalchemy:
+            try:
+                session = get_session()
+            except RuntimeError:
+                session = None
+            if session is not None:
+                try:
+                    row_plain = session.get(PlatformSettingRecord, "master_api_key_plain")
+                    row_id = session.get(PlatformSettingRecord, "master_api_key_id")
+                    if row_plain and row_id:
+                        return {"id": int(row_id.value), "key": row_plain.value, "name": "Master Key"}
+                    return None
+                finally:
+                    session.close()
         with self.connect() as conn:
             row_plain = conn.execute(
                 "SELECT value FROM platform_settings WHERE key = 'master_api_key_plain'"
@@ -434,6 +786,13 @@ class APIKeyRepository(BaseRepository):
 
     def is_master_key_hash(self, key_hash: str) -> bool:
         """Return True if the given hash belongs to a master key."""
+        if self._use_sqlalchemy:
+            session = get_session()
+            try:
+                row = session.query(ApiKeyRecord).filter(ApiKeyRecord.key_hash == key_hash).first()
+                return bool(row and row.key_type == "master")
+            finally:
+                session.close()
         with self.connect() as conn:
             row = conn.execute("SELECT key_type FROM api_keys WHERE key_hash = ?", (key_hash,)).fetchone()
             if row and row["key_type"] == "master":

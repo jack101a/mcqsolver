@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,11 +22,24 @@ from app.core.repositories.training import TrainingRepository
 from app.core.repositories.settings import SettingsRepository
 from app.core.repositories.automation_methods import AutomationMethodRepository
 
+logger = logging.getLogger(__name__)
+
 
 class Database:
     """Thread-safe SQLite wrapper acting as a Facade for domain repositories."""
 
     def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        if settings.storage.db_type != "sqlite":
+            logger.warning(
+                "legacy_database_forced_to_sqlite",
+                extra={
+                    "context": {
+                        "requested_db_type": settings.storage.db_type,
+                        "sqlite_path": settings.storage.sqlite_path,
+                    }
+                },
+            )
         self._path = Path(settings.storage.sqlite_path)
         self._lock = threading.Lock()
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,6 +54,10 @@ class Database:
         self.training = TrainingRepository(self)
         self.settings = SettingsRepository(self)
         self.automation_methods = AutomationMethodRepository(self)
+
+    @property
+    def legacy_sqlalchemy_enabled(self) -> bool:
+        return self._settings.storage.db_type == "postgresql"
 
     @staticmethod
     def _normalize_domain(domain: str | None) -> str:
@@ -495,6 +513,8 @@ class Database:
     def get_all_domain_field_mappings(self, *args, **kwargs): return self.models.get_all_domain_field_mappings(*args, **kwargs)
     def propose_field_mapping(self, *args, **kwargs): return self.models.propose_field_mapping(*args, **kwargs)
     def get_pending_field_mapping_proposals(self, *args, **kwargs): return self.models.get_pending_field_mapping_proposals(*args, **kwargs)
+    def get_field_mapping_proposals(self, *args, **kwargs): return self.models.get_field_mapping_proposals(*args, **kwargs)
+    def get_field_mapping_proposal(self, *args, **kwargs): return self.models.get_field_mapping_proposal(*args, **kwargs)
     def mark_field_mapping_proposal_status(self, *args, **kwargs): return self.models.mark_field_mapping_proposal_status(*args, **kwargs)
     def delete_field_mapping_proposal(self, *args, **kwargs): return self.models.delete_field_mapping_proposal(*args, **kwargs)
     def update_field_mapping_proposal(self, *args, **kwargs): return self.models.update_field_mapping_proposal(*args, **kwargs)
@@ -510,6 +530,8 @@ class Database:
     def delete_autofill_proposal(self, *args, **kwargs): return self.autofill.delete_autofill_proposal(*args, **kwargs)
     def update_autofill_proposal(self, *args, **kwargs): return self.autofill.update_autofill_proposal(*args, **kwargs)
     def get_approved_autofill_rules(self, *args, **kwargs): return self.autofill.get_approved_autofill_rules(*args, **kwargs)
+    def bulk_import_approved_rules(self, *args, **kwargs): return self.autofill.bulk_import_approved_rules(*args, **kwargs)
+    def bulk_replace_approved_locators(self, *args, **kwargs): return self.autofill.bulk_replace_approved_locators(*args, **kwargs)
     def propose_locator(self, *args, **kwargs): return self.autofill.propose_locator(*args, **kwargs)
     def get_pending_locators(self, *args, **kwargs): return self.autofill.get_pending_locators(*args, **kwargs)
     def get_approved_locators(self, *args, **kwargs): return self.autofill.get_approved_locators(*args, **kwargs)

@@ -174,6 +174,7 @@ class UserKeyService:
                 "status": key.status,
                 "key_version": key.key_version,
                 "user_status": user.status if user else "unknown",
+                "expires_at": key.expires_at.isoformat() if key.expires_at else None,
             }
         finally:
             session.close()

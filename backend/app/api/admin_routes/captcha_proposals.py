@@ -15,13 +15,9 @@ router = APIRouter(tags=["admin-captcha-proposals"])
 
 def _approve_one(container, proposal_id: int, model_id: int) -> None:
     """Shared approval logic: promote proposal → field_mapping."""
-    with container.db.models.connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM field_mapping_proposals WHERE id = ?", (proposal_id,)
-        ).fetchone()
-    if not row:
+    p = container.db.get_field_mapping_proposal(proposal_id)
+    if not p:
         raise HTTPException(404, detail=f"Proposal {proposal_id} not found")
-    p = dict(row)
 
     # Validate model exists and is active
     registry = container.db.get_model_registry()
@@ -57,18 +53,9 @@ async def get_captcha_proposals(request: Request) -> Any:
     container = request.app.state.container
     status = request.query_params.get("status", "pending")
     if status == "all":
-        with container.db.models.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM field_mapping_proposals ORDER BY id DESC LIMIT 500"
-            ).fetchall()
-        return JSONResponse([dict(r) for r in rows])
+        return JSONResponse(container.db.get_field_mapping_proposals(status="all", limit=500))
     if status in ("approved", "rejected"):
-        with container.db.models.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM field_mapping_proposals WHERE status = ? ORDER BY id DESC LIMIT 200",
-                (status,),
-            ).fetchall()
-        return JSONResponse([dict(r) for r in rows])
+        return JSONResponse(container.db.get_field_mapping_proposals(status=status, limit=200))
     # Default: pending
     return JSONResponse(container.db.get_pending_field_mapping_proposals())
 
@@ -123,11 +110,7 @@ async def reject_captcha_proposal(request: Request, proposal_id: int) -> Any:
         return denied
     container = request.app.state.container
     # Verify it exists
-    with container.db.models.connect() as conn:
-        row = conn.execute(
-            "SELECT id FROM field_mapping_proposals WHERE id = ?", (proposal_id,)
-        ).fetchone()
-    if not row:
+    if not container.db.get_field_mapping_proposal(proposal_id):
         raise HTTPException(404, detail="Proposal not found")
     container.db.mark_field_mapping_proposal_status(proposal_id, "rejected")
     return JSONResponse({"ok": True})

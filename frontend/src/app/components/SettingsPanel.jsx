@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { Download, Upload, Save, Bell, Globe, Shield, Loader2, Inbox, Send, CreditCard, Image, RotateCcw } from "lucide-react";
+import { Download, Upload, Save, Bell, Globe, Shield, Loader2, Inbox, Send, CreditCard, Image, RotateCcw, DatabaseBackup, CheckCircle2, Cloud, KeyRound } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
-import { apiGet, apiPostJson } from "../../api/client";
+import { apiGet, apiPostForm, apiPostJson } from "../../api/client";
 import { EmptyState } from "./EmptyState";
 
 export function SettingsPanel({
@@ -115,6 +115,192 @@ export function SettingsPanel({
   const [qrUrl, setQrUrl] = useState("");
   const [qrUploading, setQrUploading] = useState(false);
   const [paymentSaving, setPaymentSaving] = useState(false);
+
+  const [backupHealth, setBackupHealth] = useState(null);
+  const [backupSettings, setBackupSettings] = useState({
+    encryptionKey: "",
+    retentionCount: "7",
+    telegramChannelId: "",
+    gdriveEnabled: false,
+    gdriveFolderId: "",
+    gdriveClientId: "",
+    gdriveClientSecret: "",
+  });
+  const [backupBusy, setBackupBusy] = useState("");
+  const [gdriveAuthCode, setGdriveAuthCode] = useState("");
+  const [gdriveRedirectUri, setGdriveRedirectUri] = useState(() => `${window.location.origin}/admin/settings`);
+
+  useEffect(() => {
+    refreshBackupHealth();
+    Promise.all([
+      apiGet("/admin/api/settings/backup.encryption_key").catch(() => ({ value: "" })),
+      apiGet("/admin/api/settings/backup.retention_count").catch(() => ({ value: "7" })),
+      apiGet("/admin/api/settings/backup.telegram_channel_id").catch(() => ({ value: "" })),
+      apiGet("/admin/api/settings/backup.gdrive.enabled").catch(() => ({ value: "false" })),
+      apiGet("/admin/api/settings/backup.gdrive.folder_id").catch(() => ({ value: "" })),
+      apiGet("/admin/api/settings/backup.gdrive.client_id").catch(() => ({ value: "" })),
+      apiGet("/admin/api/settings/backup.gdrive.client_secret").catch(() => ({ value: "" })),
+    ]).then(([encryption, retention, channel, enabled, folder, clientId, clientSecret]) => {
+      setBackupSettings({
+        encryptionKey: encryption.value || "",
+        retentionCount: retention.value || "7",
+        telegramChannelId: channel.value || "",
+        gdriveEnabled: String(enabled.value || "").toLowerCase() === "true",
+        gdriveFolderId: folder.value || "",
+        gdriveClientId: clientId.value || "",
+        gdriveClientSecret: clientSecret.value || "",
+      });
+    });
+  }, []);
+
+  const refreshBackupHealth = async () => {
+    try {
+      const data = await apiGet("/admin/api/system/backup-health");
+      setBackupHealth(data);
+    } catch (_) {}
+  };
+
+  const updateBackupSetting = (key, value) => {
+    setBackupSettings(prev => ({ ...prev, [key]: value }));
+  };
+
+  const latestBackup = backupHealth?.last_backup || null;
+
+  const saveBackupSettings = async () => {
+    setBackupBusy("settings");
+    try {
+      await apiPostJson("/admin/api/settings/bulk", {
+        settings: {
+          "backup.encryption_key": backupSettings.encryptionKey,
+          "backup.retention_count": backupSettings.retentionCount,
+          "backup.telegram_channel_id": backupSettings.telegramChannelId,
+          "backup.gdrive.enabled": backupSettings.gdriveEnabled ? "true" : "false",
+          "backup.gdrive.folder_id": backupSettings.gdriveFolderId,
+          "backup.gdrive.client_id": backupSettings.gdriveClientId,
+          "backup.gdrive.client_secret": backupSettings.gdriveClientSecret,
+        }
+      });
+      await refreshBackupHealth();
+      showToast("Backup settings saved");
+    } catch (e) {
+      showToast(e.message || "Failed to save backup settings", "error");
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
+  const createPackageBackup = async () => {
+    setBackupBusy("create");
+    try {
+      const result = await apiPostJson("/admin/api/system/backup", {});
+      await refreshBackupHealth();
+      showToast(result.status === "completed" ? "Backup package created" : result.error || "Backup failed", result.status === "completed" ? "success" : "error");
+    } catch (e) {
+      showToast(e.message || "Backup failed", "error");
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
+  const validateBackupPackage = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBackupBusy("validate");
+    try {
+      const fd = new FormData();
+      fd.append("backup_file", file);
+      const result = await apiPostForm("/admin/api/system/backups/validate", fd);
+      showToast(result.ok ? "Backup package validated" : result.error || "Validation failed", result.ok ? "success" : "error");
+    } catch (err) {
+      showToast(err.message || "Validation failed", "error");
+    } finally {
+      e.target.value = "";
+      setBackupBusy("");
+    }
+  };
+
+  const restoreBackupPackage = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!confirm("Restore this backup package now? This overwrites server data and files.")) {
+      e.target.value = "";
+      return;
+    }
+    setBackupBusy("restore");
+    try {
+      const fd = new FormData();
+      fd.append("backup_file", file);
+      const result = await apiPostForm("/admin/api/system/backups/restore-package", fd);
+      await refreshBackupHealth();
+      showToast(result.status === "completed" ? "Backup package restored" : result.error || "Restore failed", result.status === "completed" ? "success" : "error");
+    } catch (err) {
+      showToast(err.message || "Restore failed", "error");
+    } finally {
+      e.target.value = "";
+      setBackupBusy("");
+    }
+  };
+
+  const uploadLatestToTelegram = async () => {
+    if (!latestBackup) return showToast("Create a backup first", "error");
+    setBackupBusy("telegram");
+    try {
+      const result = await apiPostJson(`/admin/api/system/backups/${latestBackup.id}/telegram`, {});
+      showToast(result.ok ? "Latest backup sent to Telegram" : "Telegram upload failed", result.ok ? "success" : "error");
+    } catch (e) {
+      showToast(e.message || "Telegram upload failed", "error");
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
+  const uploadLatestToDrive = async () => {
+    if (!latestBackup) return showToast("Create a backup first", "error");
+    setBackupBusy("drive");
+    try {
+      const result = await apiPostJson(`/admin/api/system/backups/${latestBackup.id}/gdrive`, {});
+      showToast(result.ok ? "Latest backup uploaded to Drive" : result.error || "Drive upload failed", result.ok ? "success" : "error");
+      await refreshBackupHealth();
+    } catch (e) {
+      showToast(e.message || "Drive upload failed", "error");
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
+  const openDriveAuth = async () => {
+    setBackupBusy("drive-auth");
+    try {
+      const result = await apiGet(`/admin/api/system/backups/gdrive/auth-url?redirect_uri=${encodeURIComponent(gdriveRedirectUri)}`);
+      if (!result.ok) throw new Error(result.error || "Drive auth URL failed");
+      window.open(result.url, "_blank", "noopener,noreferrer");
+      showToast("Google Drive authorization opened");
+    } catch (e) {
+      showToast(e.message || "Drive authorization failed", "error");
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
+  const exchangeDriveCode = async () => {
+    if (!gdriveAuthCode.trim()) return showToast("Paste the Google authorization code first", "error");
+    setBackupBusy("drive-code");
+    try {
+      const result = await apiPostJson("/admin/api/system/backups/gdrive/exchange", {
+        code: gdriveAuthCode.trim(),
+        redirect_uri: gdriveRedirectUri,
+      });
+      if (!result.ok) throw new Error(result.error || "Drive connection failed");
+      setBackupSettings(prev => ({ ...prev, gdriveEnabled: true }));
+      setGdriveAuthCode("");
+      await refreshBackupHealth();
+      showToast("Google Drive connected");
+    } catch (e) {
+      showToast(e.message || "Drive connection failed", "error");
+    } finally {
+      setBackupBusy("");
+    }
+  };
 
   useEffect(() => {
     apiGet("/admin/api/settings/payment.upi_id")
@@ -426,29 +612,180 @@ export function SettingsPanel({
 
       {/* Backups Section */}
       <div className={`rounded-2xl p-6 transition-colors duration-500 ${glassPanel}`}>
-        <h3 className={`text-base font-semibold mb-4 ${t_textHeading}`}>Data Resilience</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <button type="button" onClick={handleCreateBackupNow} className={glassButton}>Create DB Snap</button>
-          <button type="button" onClick={handleRestoreLatestBackup} className={glassButton}>Restore Latest</button>
-          <button type="button" onClick={handleExportFullBackup} className={glassButton}>ZIP Master (+Models)</button>
-          <form onSubmit={handleImportFullBackup} className="flex gap-2">
-            <input type="file" name="backup_file" accept=".zip" required className="hidden" id="full-zip-input" onChange={(e) => e.target.form.requestSubmit()} />
-            <label htmlFor="full-zip-input" className={`cursor-pointer ${glassButton} w-full`}>Import Master ZIP</label>
-          </form>
-          <button type="button" onClick={handleExportAutofill} className={glassButton}>Export Autofill</button>
-          <form onSubmit={handleImportAutofill} className="flex gap-2">
-            <input type="file" name="rules_file" accept=".json" required className="hidden" id="autofill-json-input" onChange={(e) => e.target.form.requestSubmit()} />
-            <label htmlFor="autofill-json-input" className={`cursor-pointer ${glassButton} w-full`}>Import Autofill</label>
-          </form>
-          <button type="button" onClick={handleExportCaptcha} className={glassButton}>Export Captcha</button>
-          <form onSubmit={handleImportCaptcha} className="flex gap-2">
-            <input type="file" name="captcha_file" accept=".json" required className="hidden" id="captcha-json-input" onChange={(e) => e.target.form.requestSubmit()} />
-            <label htmlFor="captcha-json-input" className={`cursor-pointer ${glassButton} w-full`}>Import Captcha</label>
-          </form>
-          <button type="button" disabled={!cloudBackupConfigured} onClick={handleCloudBackupPush} className={`${glassButton} ${!cloudBackupConfigured ? "opacity-40" : ""}`}>Push Cloud</button>
-          <button type="button" disabled={!cloudBackupConfigured} onClick={handleCloudBackupPull} className={`${glassButton} ${!cloudBackupConfigured ? "opacity-40" : ""}`}>Pull Cloud</button>
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-500/15 text-emerald-500 rounded-lg">
+              <DatabaseBackup size={20} />
+            </div>
+            <div>
+              <h3 className={`text-base font-semibold ${t_textHeading}`}>Data Resilience</h3>
+              <p className={`text-xs ${t_textMuted}`}>Portable backup packages for redeploy and restore.</p>
+            </div>
+          </div>
+          <button type="button" onClick={refreshBackupHealth} className={glassButton}>
+            <RotateCcw size={14} />
+            Refresh
+          </button>
         </div>
-        {!cloudBackupConfigured && <p className={`text-[10px] mt-3 italic text-center ${t_textMuted}`}>Cloud providers (AWS/S3) not detected in environment.</p>}
+
+        <div className={`grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl border p-4 mb-5 ${t_borderLight}`}>
+          <div>
+            <p className={`text-[10px] uppercase font-bold ${t_textMuted}`}>Backups</p>
+            <p className={`text-xl font-semibold ${t_textHeading}`}>{backupHealth?.total_backups ?? "-"}</p>
+          </div>
+          <div>
+            <p className={`text-[10px] uppercase font-bold ${t_textMuted}`}>Latest</p>
+            <p className={`text-sm font-medium truncate ${t_textHeading}`}>{latestBackup?.name || "None"}</p>
+          </div>
+          <div>
+            <p className={`text-[10px] uppercase font-bold ${t_textMuted}`}>Telegram</p>
+            <p className={`text-sm ${backupHealth?.telegram_channel_set ? "text-emerald-400" : t_textMuted}`}>
+              {backupHealth?.telegram_channel_set ? "Channel set" : "Not set"}
+            </p>
+          </div>
+          <div>
+            <p className={`text-[10px] uppercase font-bold ${t_textMuted}`}>Google Drive</p>
+            <p className={`text-sm ${backupHealth?.gdrive_enabled ? "text-emerald-400" : t_textMuted}`}>
+              {backupHealth?.gdrive_enabled ? "Enabled" : "Disabled"}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div className="space-y-4">
+            <h4 className={`text-xs font-bold uppercase tracking-widest flex items-center gap-2 ${t_textMuted}`}>
+              <KeyRound size={14} /> Package Settings
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>Encryption Key</label>
+                <input
+                  type="password"
+                  className={glassInput}
+                  value={backupSettings.encryptionKey}
+                  onChange={(e) => updateBackupSetting("encryptionKey", e.target.value)}
+                  placeholder="Required for encrypted .upbak"
+                />
+              </div>
+              <div>
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>Retention Count</label>
+                <input
+                  type="number"
+                  min="1"
+                  className={glassInput}
+                  value={backupSettings.retentionCount}
+                  onChange={(e) => updateBackupSetting("retentionCount", e.target.value)}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>Telegram Backup Channel ID</label>
+                <input
+                  className={glassInput}
+                  value={backupSettings.telegramChannelId}
+                  onChange={(e) => updateBackupSetting("telegramChannelId", e.target.value)}
+                  placeholder="-1001234567890"
+                />
+              </div>
+            </div>
+            <button type="button" onClick={saveBackupSettings} disabled={backupBusy === "settings"} className={solidButton}>
+              {backupBusy === "settings" ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              Save Backup Settings
+            </button>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              <button type="button" onClick={createPackageBackup} disabled={backupBusy === "create"} className={glassButton}>
+                {backupBusy === "create" ? <Loader2 size={14} className="animate-spin" /> : <DatabaseBackup size={14} />}
+                Create Package
+              </button>
+              <button type="button" onClick={uploadLatestToTelegram} disabled={!latestBackup || backupBusy === "telegram"} className={`${glassButton} ${!latestBackup ? "opacity-40" : ""}`}>
+                {backupBusy === "telegram" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                Send Latest
+              </button>
+              <label className={`cursor-pointer ${glassButton}`}>
+                {backupBusy === "validate" ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                Validate Package
+                <input type="file" accept=".upbak,.zip" className="hidden" onChange={validateBackupPackage} />
+              </label>
+              <label className={`cursor-pointer ${glassButton}`}>
+                {backupBusy === "restore" ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                Restore Package
+                <input type="file" accept=".upbak,.zip" className="hidden" onChange={restoreBackupPackage} />
+              </label>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className={`text-xs font-bold uppercase tracking-widest flex items-center gap-2 ${t_textMuted}`}>
+              <Cloud size={14} /> Google Drive
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className={`flex items-center gap-2 text-xs ${t_textMuted}`}>
+                <input
+                  type="checkbox"
+                  checked={backupSettings.gdriveEnabled}
+                  onChange={(e) => updateBackupSetting("gdriveEnabled", e.target.checked)}
+                />
+                Enable Drive uploads
+              </label>
+              <div>
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>Drive Folder ID</label>
+                <input
+                  className={glassInput}
+                  value={backupSettings.gdriveFolderId}
+                  onChange={(e) => updateBackupSetting("gdriveFolderId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>OAuth Client ID</label>
+                <input
+                  className={glassInput}
+                  value={backupSettings.gdriveClientId}
+                  onChange={(e) => updateBackupSetting("gdriveClientId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>OAuth Client Secret</label>
+                <input
+                  type="password"
+                  className={glassInput}
+                  value={backupSettings.gdriveClientSecret}
+                  onChange={(e) => updateBackupSetting("gdriveClientSecret", e.target.value)}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>Redirect URI</label>
+                <input
+                  className={glassInput}
+                  value={gdriveRedirectUri}
+                  onChange={(e) => setGdriveRedirectUri(e.target.value)}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={`text-xs block mb-1 ${t_textMuted}`}>Authorization Code</label>
+                <input
+                  className={glassInput}
+                  value={gdriveAuthCode}
+                  onChange={(e) => setGdriveAuthCode(e.target.value)}
+                  placeholder="Paste code after OAuth consent"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button type="button" onClick={openDriveAuth} disabled={backupBusy === "drive-auth"} className={glassButton}>
+                {backupBusy === "drive-auth" ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
+                Connect
+              </button>
+              <button type="button" onClick={exchangeDriveCode} disabled={backupBusy === "drive-code"} className={glassButton}>
+                {backupBusy === "drive-code" ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                Save Token
+              </button>
+              <button type="button" onClick={uploadLatestToDrive} disabled={!latestBackup || backupBusy === "drive"} className={`${glassButton} ${!latestBackup ? "opacity-40" : ""}`}>
+                {backupBusy === "drive" ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                Upload Latest
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Overview Table */}

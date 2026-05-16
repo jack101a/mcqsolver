@@ -69,6 +69,8 @@ def build_container(settings: Settings) -> Container:
     # Create tables if they don't exist (dev convenience; production uses migrations)
     from app.core.db import create_all_tables
     create_all_tables()
+    if db.legacy_sqlalchemy_enabled:
+        db.ensure_master_key()
 
     # Captcha solver (existing ONNX pipeline)
     model_router = ModelRouter(settings=settings, db=db)
@@ -102,6 +104,7 @@ def build_container(settings: Settings) -> Container:
     # New scalable services (SQLAlchemy-based)
     user_service = UserService(session_factory=get_session)
     subscription_service = SubscriptionService(session_factory=get_session)
+    subscription_service.seed_default_plans()
     payment_service = PaymentService(session_factory=get_session)
     audit_service = AuditService(session_factory=get_session)
     usage_cycle_service = UsageCycleService(session_factory=get_session)
