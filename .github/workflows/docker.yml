@@ -2,7 +2,7 @@ name: Build and Publish Docker Image
 
 on:
   push:
-    branches: [ "before-scale" ]
+    branches: [ "production" ]
 
 jobs:
   build-and-push:
