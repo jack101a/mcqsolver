@@ -17,6 +17,38 @@ export function ExamStatsPanel({
   const [togglingLearning, setTogglingLearning] = useState(false);
   const initialSettings = useRef(null);
 
+  const confidenceToPercent = (rawValue) => {
+    const parsed = Number.parseFloat(String(rawValue ?? "").trim());
+    if (!Number.isFinite(parsed)) return "";
+    return (parsed * 100).toString();
+  };
+
+  const percentToConfidence = (rawPercent) => {
+    const parsed = Number.parseFloat(String(rawPercent ?? "").trim());
+    if (!Number.isFinite(parsed)) return "";
+    const clamped = Math.max(0, Math.min(100, parsed));
+    return (clamped / 100).toFixed(4).replace(/\.?0+$/, "");
+  };
+
+  const sanitizeExamSettings = (current) => {
+    const next = { ...current };
+    const confidenceRaw = Number.parseFloat(String(next["exam.learn_min_confidence"] ?? "").trim());
+    if (Number.isFinite(confidenceRaw)) {
+      const bounded = Math.max(0, Math.min(1, confidenceRaw));
+      next["exam.learn_min_confidence"] = bounded.toFixed(4).replace(/\.?0+$/, "");
+    } else if (!next["exam.learn_min_confidence"]) {
+      next["exam.learn_min_confidence"] = "0.95";
+    }
+
+    const confirmationsRaw = Number.parseInt(String(next["exam.learn_min_confirmations"] ?? "").trim(), 10);
+    if (Number.isFinite(confirmationsRaw)) {
+      next["exam.learn_min_confirmations"] = String(Math.max(1, confirmationsRaw));
+    } else if (!next["exam.learn_min_confirmations"]) {
+      next["exam.learn_min_confirmations"] = "10";
+    }
+    return next;
+  };
+
   useEffect(() => {
     const isDirty = initialSettings.current !== null && JSON.stringify(settings) !== JSON.stringify(initialSettings.current);
     if (!isDirty) return;
@@ -37,8 +69,9 @@ export function ExamStatsPanel({
       data.settings.forEach(s => {
         settingsMap[s.key] = s.value;
       });
-      setSettings(settingsMap);
-      initialSettings.current = JSON.parse(JSON.stringify(settingsMap));
+      const normalized = sanitizeExamSettings(settingsMap);
+      setSettings(normalized);
+      initialSettings.current = JSON.parse(JSON.stringify(normalized));
     } catch (e) {
       console.error("Failed to fetch settings", e);
     } finally {
@@ -50,7 +83,10 @@ export function ExamStatsPanel({
     e.preventDefault();
     setSaving(true);
     try {
-      await apiPostJson("/admin/api/settings/bulk", { settings });
+      const normalized = sanitizeExamSettings(settings);
+      setSettings(normalized);
+      await apiPostJson("/admin/api/settings/bulk", { settings: normalized });
+      initialSettings.current = JSON.parse(JSON.stringify(normalized));
       showToast("Exam settings saved successfully");
     } catch (e) {
       showToast("Error saving settings", "error");
@@ -275,6 +311,36 @@ export function ExamStatsPanel({
             </div>
           </div>
         )}
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className={`rounded-xl p-4 border ${t_borderLight}`}>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>Minimum Confidence (%) for Learned Answer Use</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              className={glassInput}
+              value={confidenceToPercent(settings["exam.learn_min_confidence"])}
+              onChange={(e) => updateSetting("exam.learn_min_confidence", percentToConfidence(e.target.value))}
+              placeholder="95"
+            />
+            <p className={`text-xs mt-2 ${t_textMuted}`}>Higher value is safer. Example: `95` means confidence must be at least `0.95`.</p>
+          </div>
+          <div className={`rounded-xl p-4 border ${t_borderLight}`}>
+            <label className={`text-xs block mb-1 ${t_textMuted}`}>Minimum Verified Count for Learned Answer Use</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              className={glassInput}
+              value={settings["exam.learn_min_confirmations"] || "10"}
+              onChange={(e) => updateSetting("exam.learn_min_confirmations", e.target.value)}
+              placeholder="10"
+            />
+            <p className={`text-xs mt-2 ${t_textMuted}`}>This many correct confirmations are required before learned answers are used.</p>
+          </div>
+        </div>
 
         <div className={`mt-4 p-4 rounded-xl border ${t_borderLight} text-xs ${t_textMuted}`}>
           <p className="font-medium mb-1">How it works:</p>

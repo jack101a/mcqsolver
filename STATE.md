@@ -1,33 +1,40 @@
-# STATE.md - Switch Runtime To PostgreSQL And Validate
+# STATE.md - Exam Learning Threshold Controls
 
 ## Status
 COMPLETE
 
 ## Active Task
-Switched deploy defaults to PostgreSQL and attempted runtime validation/migration tests.
+Made self-learning usage thresholds editable in Admin Exam UI and verified the changes build successfully.
 
 ## Last Files Modified
+- `frontend/src/app/components/ExamStatsPanel.jsx`
 - `TASK.md`
 - `STATE.md`
-- `docker-compose.yml`
 
 ## Last Command Run
-`$env:AUTH_HASH_SALT='dev-test-salt'; $env:ADMIN_TOKEN='dev-test-admin'; python backend\scripts\migrate_exam_learning_to_sqlalchemy.py --dry-run --database-url "postgresql+psycopg2://sa_helper:sa_helper@localhost:5432/sa_helper"`
+`npm --prefix frontend run build`
 
 ## Last Output/Error
 Completed:
-- Updated `docker-compose.yml` defaults from `DB_TYPE=sqlite` to `DB_TYPE=postgresql` for `api`, `worker`, and `telegram-bot`.
-- Verified compose syntax parses successfully (`docker-compose.yml: OK`).
-- Verified migration script targets PostgreSQL in dry-run mode.
-- Dry-run read current SQLite source rows: `exam_learned=31`, `exam_attempts=43`.
+- Confirmed solver already auto-learns through exam feedback and uses learned data at solve time based on:
+  - `exam.learn_min_confidence`
+  - `exam.learn_min_confirmations`
+- Added UI inputs in Exam panel:
+  - `Minimum Confidence (%) for Learned Answer Use`
+  - `Minimum Verified Count for Learned Answer Use`
+- Added normalization/safety:
+  - Confidence is entered as `%` but saved as `0.0..1.0`
+  - Confidence clamped to `0..1`
+  - Verified count clamped to minimum `1`
+- Save action now posts normalized threshold values and refreshes dirty-check baseline.
+- Frontend build verification passed.
 
-Blocked:
-- `docker compose up -d postgres` failed because `docker` command is not available in this environment (`CommandNotFoundException`).
-- Live Postgres migration write and row-count verification could not run here without Docker/Postgres runtime.
-- `TASK_QUEUE_REMAINING.md` was not touched.
+Build output:
+- `vite v5.4.21 building for production...`
+- `✓ built in 10.32s`
 
 ## Immediate Next Step
-On the Docker host (where Docker is installed), run:
-1. `docker compose up -d postgres`
-2. `python backend\scripts\migrate_exam_learning_to_sqlalchemy.py --database-url "postgresql+psycopg2://sa_helper:sa_helper@localhost:5432/sa_helper"`
-3. Verify counts directly in Postgres for `exam_learned` and `exam_attempts`.
+Deploy updated frontend build and test in Admin -> Exam:
+1. Set confidence % and verified count.
+2. Save config.
+3. Run real exam feedback flow and confirm learned answers trigger according to thresholds.

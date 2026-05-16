@@ -29,7 +29,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY backend/ /app/backend/
 COPY extension/ /app/extension/
-COPY data/ /opt/sa-helper-seed/data/
 COPY backend/config/ /opt/sa-helper-seed/backend/config/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --from=frontend-builder /frontend/dist /app/frontend/dist
@@ -37,8 +36,7 @@ COPY --from=frontend-builder /frontend/dist /app/frontend/dist
 # Link the built dashboard to the template folder
 RUN mkdir -p /app/backend/app/templates && \
     cp /app/frontend/dist/index.html /app/backend/app/templates/admin.html && \
-    cp -a /opt/sa-helper-seed/data /app/data && \
-    mkdir -p /app/backend/logs && \
+    mkdir -p /app/backend/logs /app/data && \
     chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Environment variables

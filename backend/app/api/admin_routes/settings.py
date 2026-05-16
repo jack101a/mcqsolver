@@ -310,6 +310,12 @@ def _telegram_enabled(container) -> bool:
     return bool(container.settings.telegram.bot_enabled)
 
 
+def _redis_enabled(container) -> bool:
+    settings = getattr(container, "settings", None)
+    redis = getattr(settings, "redis", None)
+    return bool(getattr(redis, "enabled", False))
+
+
 @router.get("/api/telegram/status")
 async def telegram_status(request: Request):
     """Return Telegram bot configuration status without exposing secrets."""
@@ -411,7 +417,7 @@ async def repack_extension(request: Request):
     if denied:
         return denied
     container = request.app.state.container
-    if container.settings.redis.enabled:
+    if _redis_enabled(container):
         try:
             result = await run_task_with_timeout(
                 "maintenance.package_extension",
@@ -438,7 +444,7 @@ async def download_extension(request: Request, format: str = "zip"):
     container = request.app.state.container
     filename = _extension_filename_for_format(format)  # validate format before packaging
 
-    if container.settings.redis.enabled:
+    if _redis_enabled(container):
         try:
             result = await run_task_with_timeout(
                 "maintenance.package_extension",

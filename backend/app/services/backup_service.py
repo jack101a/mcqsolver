@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -213,23 +214,41 @@ class BackupService:
             "Restore: deploy container, upload this package in admin, validate, restore."
         )
         try:
-            import asyncio
-            from telegram import Bot
-
-            async def _send() -> None:
-                bot = Bot(token=token)
-                await bot.send_message(chat_id=channel_id, text=text)
-                path = result.get("file_path_or_uri")
-                if path and Path(path).exists() and Path(path).stat().st_size < 45 * 1024 * 1024:
-                    with Path(path).open("rb") as fh:
-                        await bot.send_document(chat_id=channel_id, document=fh, filename=Path(path).name)
-
-            asyncio.run(_send())
+            self._telegram_post(token, "sendMessage", data={"chat_id": channel_id, "text": text})
+            path = result.get("file_path_or_uri")
+            if path and Path(path).exists() and Path(path).stat().st_size < 45 * 1024 * 1024:
+                package = Path(path)
+                with package.open("rb") as fh:
+                    self._telegram_post(
+                        token,
+                        "sendDocument",
+                        data={"chat_id": channel_id, "caption": f"SA Helper backup: {package.name}"},
+                        files={"document": (package.name, fh, "application/octet-stream")},
+                        timeout=180,
+                    )
+            self._set_setting("backup.telegram_last_error", "")
             return True
         except Exception as exc:
             self._set_setting("backup.telegram_last_error", str(exc))
             logger.warning("backup_telegram_notify_failed", extra={"context": {"error": str(exc)}})
             return False
+
+    def test_telegram_destination(self, chat_id: str | None = None, text: str | None = None) -> dict:
+        token = self._telegram_token()
+        target = (chat_id or self._setting("backup.telegram_channel_id")).strip()
+        if not token:
+            return {"ok": False, "error": "TELEGRAM_BOT_TOKEN or telegram.bot_token is not configured"}
+        if not target:
+            return {"ok": False, "error": "backup.telegram_channel_id is not configured"}
+        message = text or f"SA Helper backup test message\nUTC: {datetime.now(timezone.utc).isoformat()}"
+        try:
+            payload = self._telegram_post(token, "sendMessage", data={"chat_id": target, "text": message})
+            self._set_setting("backup.telegram_last_error", "")
+            return {"ok": True, "chat_id": target, "message_id": payload.get("result", {}).get("message_id")}
+        except Exception as exc:
+            self._set_setting("backup.telegram_last_error", str(exc))
+            logger.warning("backup_telegram_test_failed", extra={"context": {"error": str(exc), "chat_id": target}})
+            return {"ok": False, "chat_id": target, "error": str(exc)}
 
     def gdrive_auth_url(self, redirect_uri: str) -> dict:
         client_id = self._setting("backup.gdrive.client_id")
@@ -262,7 +281,12 @@ class BackupService:
             self._set_setting("backup.gdrive.last_error", resp.text)
             return {"ok": False, "error": resp.text}
         data = resp.json()
-        self._set_setting("backup.gdrive.token_json", json.dumps(data))
+        existing = self._gdrive_token_data()
+        if "refresh_token" not in data and existing.get("refresh_token"):
+            data["refresh_token"] = existing["refresh_token"]
+        if data.get("expires_in"):
+            data["expires_at"] = int(time.time()) + int(data["expires_in"])
+        self._save_gdrive_token_data(data)
         self._set_setting("backup.gdrive.enabled", "true")
         return {"ok": True, "expires_in": data.get("expires_in")}
 
@@ -477,12 +501,73 @@ class BackupService:
     def _telegram_token(self) -> str:
         return os.getenv("TELEGRAM_BOT_TOKEN", "") or self._settings.telegram.bot_token or self._setting("telegram.bot_token")
 
-    def _gdrive_access_token(self) -> str:
+    def _telegram_post(
+        self,
+        token: str,
+        method: str,
+        *,
+        data: dict[str, Any],
+        files: dict[str, Any] | None = None,
+        timeout: int = 60,
+    ) -> dict:
+        resp = httpx.post(f"https://api.telegram.org/bot{token}/{method}", data=data, files=files, timeout=timeout)
+        if resp.status_code >= 400:
+            raise RuntimeError(resp.text)
+        payload = resp.json()
+        if not payload.get("ok"):
+            raise RuntimeError(payload.get("description") or resp.text)
+        return payload
+
+    def _gdrive_token_data(self) -> dict:
         raw = self._setting("backup.gdrive.token_json")
         if not raw:
-            return ""
+            return {}
         try:
             data = json.loads(raw)
-            return data.get("access_token", "")
+            return data if isinstance(data, dict) else {}
         except Exception:
+            return {}
+
+    def _save_gdrive_token_data(self, data: dict) -> None:
+        self._set_setting("backup.gdrive.token_json", json.dumps(data))
+
+    def _gdrive_access_token(self) -> str:
+        data = self._gdrive_token_data()
+        if not data:
             return ""
+        expires_at = int(data.get("expires_at") or 0)
+        if data.get("access_token") and (not expires_at or expires_at > int(time.time()) + 60):
+            return data.get("access_token", "")
+        refreshed = self._refresh_gdrive_token(data)
+        return refreshed.get("access_token", "")
+
+    def _refresh_gdrive_token(self, token_data: dict) -> dict:
+        refresh_token = token_data.get("refresh_token")
+        client_id = self._setting("backup.gdrive.client_id")
+        client_secret = self._setting("backup.gdrive.client_secret")
+        if not refresh_token or not client_id or not client_secret:
+            return token_data
+        try:
+            resp = httpx.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+                timeout=30,
+            )
+            if resp.status_code >= 400:
+                self._set_setting("backup.gdrive.last_error", resp.text)
+                return token_data
+            updated = token_data | resp.json()
+            updated["refresh_token"] = refresh_token
+            if updated.get("expires_in"):
+                updated["expires_at"] = int(time.time()) + int(updated["expires_in"])
+            self._save_gdrive_token_data(updated)
+            self._set_setting("backup.gdrive.last_error", "")
+            return updated
+        except Exception as exc:
+            self._set_setting("backup.gdrive.last_error", str(exc))
+            return token_data

@@ -290,8 +290,8 @@ class ExamService:
             return 3
 
     def _learning_mode(self) -> str:
-        mode = str(self._db.get_setting("exam.learning_mode", "train_only") or "train_only").strip().lower()
-        return mode if mode in {"train_only", "auto_click"} else "train_only"
+        mode = str(self._db.get_setting("exam.learning_mode", "auto_click") or "auto_click").strip().lower()
+        return mode if mode in {"train_only", "auto_click"} else "auto_click"
 
     def _tessdata_dir(self) -> str | None:
         """Return absolute path to tessdata dir if it exists, else None."""

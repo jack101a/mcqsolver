@@ -2,19 +2,38 @@
 
 from __future__ import annotations
 
+import html
 from typing import Any
 
 import os, signal, subprocess, sys, shlex
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.workers.dispatch import run_task_with_timeout
 
 from .utils import _admin_guard
 
 router = APIRouter(tags=["admin-system"])
+
+
+async def _optional_json(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+        return body if isinstance(body, dict) else {}
+    except Exception:
+        return {}
+
+
+def _public_base_url(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _gdrive_callback_uri(request: Request) -> str:
+    return f"{_public_base_url(request)}/api/system/backups/gdrive/callback"
 
 
 # ── Backup ─────────────────────────────────────────────────────────────────
@@ -108,12 +127,58 @@ async def upload_backup_to_telegram(request: Request, backup_id: str) -> Any:
     return JSONResponse({"ok": ok})
 
 
+@router.post("/api/system/backups/telegram/test")
+async def test_backup_telegram(request: Request) -> Any:
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    body = await _optional_json(request)
+    chat_id = str(body.get("chat_id") or "").strip()
+    text = str(body.get("text") or "").strip() or None
+    save = bool(body.get("save"))
+    service = request.app.state.container.backup_service
+    if chat_id and save:
+        service._set_setting("backup.telegram_channel_id", chat_id)
+    result = service.test_telegram_destination(chat_id=chat_id or None, text=text)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
 @router.get("/api/system/backups/gdrive/auth-url")
 async def gdrive_auth_url(request: Request, redirect_uri: str) -> Any:
     denied = _admin_guard(request)
     if denied:
         return denied
     return JSONResponse(request.app.state.container.backup_service.gdrive_auth_url(redirect_uri))
+
+
+@router.get("/api/system/backups/gdrive/connect")
+async def gdrive_connect(request: Request) -> Any:
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    redirect_uri = str(request.query_params.get("redirect_uri") or _gdrive_callback_uri(request))
+    result = request.app.state.container.backup_service.gdrive_auth_url(redirect_uri)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Google Drive auth is not configured"))
+    return RedirectResponse(result["url"])
+
+
+@router.get("/api/system/backups/gdrive/callback")
+async def gdrive_callback(request: Request, code: str = "", error: str = "") -> Any:
+    denied = _admin_guard(request)
+    if denied:
+        return denied
+    if error:
+        return HTMLResponse(f"<h1>Google Drive connection failed</h1><p>{html.escape(error)}</p>", status_code=400)
+    if not code:
+        return HTMLResponse("<h1>Google Drive connection failed</h1><p>Missing authorization code.</p>", status_code=400)
+    result = await request.app.state.container.backup_service.gdrive_exchange_code(code, _gdrive_callback_uri(request))
+    if not result.get("ok"):
+        return HTMLResponse(
+            f"<h1>Google Drive connection failed</h1><p>{html.escape(str(result.get('error') or 'unknown error'))}</p>",
+            status_code=400,
+        )
+    return HTMLResponse("<h1>Google Drive connected</h1><p>You can close this tab and return to SA Helper.</p>")
 
 
 @router.post("/api/system/backups/gdrive/exchange")
