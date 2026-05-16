@@ -1,33 +1,28 @@
-# TASK.md - Exam Learning Threshold Controls
+# TASK.md - Plain Compose Rewrite
 
 ## Goal
-Expose editable self-learning usage thresholds in Admin UI so learned MCQ data can be safely applied to real exams.
+Rewrite Docker Compose in a plain explicit style like the user's original compose, without YAML anchors or hidden merges.
 
 ## Status
 COMPLETE
 
 ## Scope Included
-- Verify current auto-learning behavior in code.
-- Add Admin UI controls for:
-  - minimum confidence percentage
-  - minimum verified confirmation count
-- Ensure values are saved in existing `platform_settings` keys used by solver runtime.
-- Validate by building frontend.
+- Remove `x-` anchors and `<<` merges.
+- Keep all services explicit: api, worker, telegram-bot, telegram-bot-api, postgres, redis.
+- Keep minimal app env in each app service.
+- Keep clear host path variable `SA_HELPER_HOST_ROOT`.
+- Verify YAML and app settings load.
 
 ## Scope Excluded
-- Backend schema changes.
-- New APIs for exam learning thresholds.
-- Changes to learning algorithm internals.
+- Running Docker locally; Docker is not installed in this workspace.
 
 ## Plan
-- [x] Inspect exam solver learning gates and admin exam panel.
-- [x] Patch exam panel to edit confidence% and verified count.
-- [x] Add safe normalization/clamping before save.
-- [x] Build frontend and confirm successful output.
+- [x] Read AGENTS/STATE/TASK and check worktree.
+- [x] Inspect current compose.
+- [x] Rewrite compose explicitly.
+- [x] Validate YAML and config values.
 - [x] Update `STATE.md`.
 
 ## Verification Approach
-- Confirm runtime keys already used by solver:
-  - `exam.learn_min_confidence`
-  - `exam.learn_min_confirmations`
-- Run `npm --prefix frontend run build`.
+- YAML parse for `docker-compose.yml` and `backend/config/config.yaml`.
+- Parse key config values.

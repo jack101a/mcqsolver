@@ -33,7 +33,7 @@ def _public_base_url(request: Request) -> str:
 
 
 def _gdrive_callback_uri(request: Request) -> str:
-    return f"{_public_base_url(request)}/api/system/backups/gdrive/callback"
+    return f"{_public_base_url(request)}/admin/api/system/backups/gdrive/callback"
 
 
 # ── Backup ─────────────────────────────────────────────────────────────────
@@ -122,9 +122,10 @@ async def upload_backup_to_telegram(request: Request, backup_id: str) -> Any:
         "backup_id": backup["id"],
         "file_path_or_uri": backup["path"],
         "size_bytes": backup["size_bytes"],
-        "checksum": "",
+        "checksum": container.backup_service._package_checksum(Path(backup["path"])),
     })
-    return JSONResponse({"ok": ok})
+    error = "" if ok else container.backup_service._setting("backup.telegram_last_error")
+    return JSONResponse({"ok": ok, "error": error}, status_code=200 if ok else 400)
 
 
 @router.post("/api/system/backups/telegram/test")

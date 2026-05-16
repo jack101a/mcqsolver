@@ -28,6 +28,8 @@ from app.core.paths import get_project_root
 logger = logging.getLogger(__name__)
 
 BACKUP_VERSION = 1
+TELEGRAM_UPLOAD_LIMIT_BYTES = 45 * 1024 * 1024
+TELEGRAM_HOSTED_API_BASE_URL = "https://api.telegram.org"
 SYSTEM_FILE_ROOTS = [
     "data/models",
     "data/mappings",
@@ -191,13 +193,23 @@ class BackupService:
 
     def get_backup_health(self) -> dict:
         backups = self.list_backups()
+        gdrive_token = self._gdrive_token_data()
         return {
             "total_backups": len(backups),
             "last_backup": backups[0] if backups else None,
             "backup_dir": str(self._backup_dir),
             "db_type": self._settings.storage.db_type,
             "telegram_channel_set": bool(self._setting("backup.telegram_channel_id")),
+            "telegram_token_set": bool(self._telegram_token()),
+            "telegram_api_base_url": self._telegram_api_base_url(),
+            "telegram_local_api": self._telegram_uses_local_api(),
+            "telegram_last_error": self._setting("backup.telegram_last_error"),
             "gdrive_enabled": self._truthy_setting("backup.gdrive.enabled"),
+            "gdrive_client_configured": bool(self._gdrive_client_id() and self._gdrive_client_secret()),
+            "gdrive_connected": bool(gdrive_token.get("refresh_token") or gdrive_token.get("access_token")),
+            "gdrive_folder_id_set": bool(self._setting("backup.gdrive.folder_id")),
+            "gdrive_last_error": self._setting("backup.gdrive.last_error"),
+            "gdrive_last_file_id": self._setting("backup.gdrive.last_file_id"),
         }
 
     def notify_telegram_backup(self, result: dict) -> bool:
@@ -206,26 +218,31 @@ class BackupService:
         if not token or not channel_id:
             return False
         status = result.get("status")
+        path = result.get("file_path_or_uri")
+        package = Path(path) if path else None
+        delivery = "message only"
+        if (
+            package
+            and package.exists()
+            and package.stat().st_size > TELEGRAM_UPLOAD_LIMIT_BYTES
+            and not self._telegram_uses_local_api()
+        ):
+            parts = (package.stat().st_size + TELEGRAM_UPLOAD_LIMIT_BYTES - 1) // TELEGRAM_UPLOAD_LIMIT_BYTES
+            delivery = f"{parts} numbered file parts"
+        elif package and package.exists():
+            delivery = "single document via local Bot API" if self._telegram_uses_local_api() else "single document"
         text = (
             f"Backup {status}\n"
             f"ID: {result.get('backup_id')}\n"
             f"Size: {result.get('size_bytes', 0)} bytes\n"
             f"Checksum: {result.get('checksum', 'n/a')}\n"
+            f"Delivery: {delivery}\n"
             "Restore: deploy container, upload this package in admin, validate, restore."
         )
         try:
             self._telegram_post(token, "sendMessage", data={"chat_id": channel_id, "text": text})
-            path = result.get("file_path_or_uri")
-            if path and Path(path).exists() and Path(path).stat().st_size < 45 * 1024 * 1024:
-                package = Path(path)
-                with package.open("rb") as fh:
-                    self._telegram_post(
-                        token,
-                        "sendDocument",
-                        data={"chat_id": channel_id, "caption": f"SA Helper backup: {package.name}"},
-                        files={"document": (package.name, fh, "application/octet-stream")},
-                        timeout=180,
-                    )
+            if package and package.exists():
+                self._send_telegram_package(token, channel_id, package, result)
             self._set_setting("backup.telegram_last_error", "")
             return True
         except Exception as exc:
@@ -246,14 +263,15 @@ class BackupService:
             self._set_setting("backup.telegram_last_error", "")
             return {"ok": True, "chat_id": target, "message_id": payload.get("result", {}).get("message_id")}
         except Exception as exc:
-            self._set_setting("backup.telegram_last_error", str(exc))
-            logger.warning("backup_telegram_test_failed", extra={"context": {"error": str(exc), "chat_id": target}})
-            return {"ok": False, "chat_id": target, "error": str(exc)}
+            error = str(exc)
+            self._set_setting("backup.telegram_last_error", error)
+            logger.warning("backup_telegram_test_failed", extra={"context": {"error": error, "chat_id": target}})
+            return {"ok": False, "chat_id": target, "error": error, "hint": self._telegram_error_hint(error)}
 
     def gdrive_auth_url(self, redirect_uri: str) -> dict:
-        client_id = self._setting("backup.gdrive.client_id")
+        client_id = self._gdrive_client_id()
         if not client_id:
-            return {"ok": False, "error": "backup.gdrive.client_id is not configured"}
+            return {"ok": False, "error": "Google Drive OAuth client is not configured (set GOOGLE_DRIVE_CLIENT_ID or backup.gdrive.client_id)"}
         params = {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -265,10 +283,10 @@ class BackupService:
         return {"ok": True, "url": "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)}
 
     async def gdrive_exchange_code(self, code: str, redirect_uri: str) -> dict:
-        client_id = self._setting("backup.gdrive.client_id")
-        client_secret = self._setting("backup.gdrive.client_secret")
+        client_id = self._gdrive_client_id()
+        client_secret = self._gdrive_client_secret()
         if not client_id or not client_secret:
-            return {"ok": False, "error": "Google Drive OAuth client is not configured"}
+            return {"ok": False, "error": "Google Drive OAuth client is not configured (set GOOGLE_DRIVE_CLIENT_ID/GOOGLE_DRIVE_CLIENT_SECRET)"}
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post("https://oauth2.googleapis.com/token", data={
                 "code": code,
@@ -298,23 +316,40 @@ class BackupService:
         folder_id = self._setting("backup.gdrive.folder_id")
         if folder_id:
             metadata["parents"] = [folder_id]
-        boundary = "backup_boundary"
-        body = (
-            f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
-            + json.dumps(metadata)
-            + f"\r\n--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n"
-        ).encode("utf-8") + package_path.read_bytes() + f"\r\n--{boundary}--\r\n".encode("utf-8")
         try:
-            resp = httpx.post(
-                "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-                headers={"Authorization": f"Bearer {token}", "Content-Type": f"multipart/related; boundary={boundary}"},
-                content=body,
-                timeout=120,
+            init_resp = httpx.post(
+                "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json; charset=UTF-8",
+                    "X-Upload-Content-Type": "application/octet-stream",
+                    "X-Upload-Content-Length": str(package_path.stat().st_size),
+                },
+                content=json.dumps(metadata).encode("utf-8"),
+                timeout=30,
             )
-            if resp.status_code >= 400:
-                self._set_setting("backup.gdrive.last_error", resp.text)
-                return {"ok": False, "error": resp.text}
-            data = resp.json()
+            if init_resp.status_code >= 400:
+                self._set_setting("backup.gdrive.last_error", init_resp.text)
+                return {"ok": False, "error": init_resp.text}
+            upload_url = init_resp.headers.get("Location")
+            if not upload_url:
+                error = "Google Drive did not return a resumable upload URL"
+                self._set_setting("backup.gdrive.last_error", error)
+                return {"ok": False, "error": error}
+            with package_path.open("rb") as fh:
+                upload_resp = httpx.put(
+                    upload_url,
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "Content-Length": str(package_path.stat().st_size),
+                    },
+                    content=fh,
+                    timeout=300,
+                )
+            if upload_resp.status_code >= 400:
+                self._set_setting("backup.gdrive.last_error", upload_resp.text)
+                return {"ok": False, "error": upload_resp.text}
+            data = upload_resp.json()
             self._set_setting("backup.gdrive.last_file_id", data.get("id", ""))
             self._set_setting("backup.gdrive.last_error", "")
             return {"ok": True, "file_id": data.get("id")}
@@ -498,8 +533,65 @@ class BackupService:
     def _backup_encryption_key(self) -> str:
         return self._setting("backup.encryption_key") or os.getenv("BACKUP_ENCRYPTION_KEY", "")
 
+    def _package_checksum(self, package: Path) -> str:
+        try:
+            return _sha256(package.read_bytes()) if package.exists() else ""
+        except Exception:
+            return ""
+
     def _telegram_token(self) -> str:
         return os.getenv("TELEGRAM_BOT_TOKEN", "") or self._settings.telegram.bot_token or self._setting("telegram.bot_token")
+
+    def _telegram_error_hint(self, error: str) -> str:
+        lowered = error.lower()
+        if "unauthorized" in lowered or "not found" in lowered and "bot" in lowered:
+            return "Check the Telegram bot token."
+        if "chat not found" in lowered:
+            return "Check the channel/group ID and add the bot to that chat."
+        if "forbidden" in lowered or "not a member" in lowered or "kicked" in lowered:
+            return "Add the bot to the channel/group and give it permission to post messages."
+        return "Check bot token, chat ID, and bot membership/permissions."
+
+    def _send_telegram_package(self, token: str, channel_id: str, package: Path, result: dict) -> None:
+        size = package.stat().st_size
+        checksum = result.get("checksum", "n/a")
+        if self._telegram_uses_local_api() or size <= TELEGRAM_UPLOAD_LIMIT_BYTES:
+            with package.open("rb") as fh:
+                self._telegram_post(
+                    token,
+                    "sendDocument",
+                    data={
+                        "chat_id": channel_id,
+                        "caption": f"SA Helper backup: {package.name}\nChecksum: {checksum}",
+                    },
+                    files={"document": (package.name, fh, "application/octet-stream")},
+                    timeout=180,
+                )
+            return
+
+        total_parts = (size + TELEGRAM_UPLOAD_LIMIT_BYTES - 1) // TELEGRAM_UPLOAD_LIMIT_BYTES
+        with package.open("rb") as fh:
+            for part_index in range(1, total_parts + 1):
+                chunk = fh.read(TELEGRAM_UPLOAD_LIMIT_BYTES)
+                part_name = f"{package.name}.part{part_index:03d}-of-{total_parts:03d}"
+                caption = (
+                    f"SA Helper backup part {part_index}/{total_parts}: {package.name}\n"
+                    f"Checksum: {checksum}\n"
+                    "Rejoin parts in order before restore."
+                )
+                self._telegram_post(
+                    token,
+                    "sendDocument",
+                    data={"chat_id": channel_id, "caption": caption},
+                    files={"document": (part_name, io.BytesIO(chunk), "application/octet-stream")},
+                    timeout=180,
+                )
+
+    def _gdrive_client_id(self) -> str:
+        return os.getenv("GOOGLE_DRIVE_CLIENT_ID", "").strip() or self._setting("backup.gdrive.client_id").strip()
+
+    def _gdrive_client_secret(self) -> str:
+        return os.getenv("GOOGLE_DRIVE_CLIENT_SECRET", "").strip() or self._setting("backup.gdrive.client_secret").strip()
 
     def _telegram_post(
         self,
@@ -510,13 +602,24 @@ class BackupService:
         files: dict[str, Any] | None = None,
         timeout: int = 60,
     ) -> dict:
-        resp = httpx.post(f"https://api.telegram.org/bot{token}/{method}", data=data, files=files, timeout=timeout)
+        resp = httpx.post(f"{self._telegram_api_base_url()}/bot{token}/{method}", data=data, files=files, timeout=timeout)
         if resp.status_code >= 400:
             raise RuntimeError(resp.text)
         payload = resp.json()
         if not payload.get("ok"):
             raise RuntimeError(payload.get("description") or resp.text)
         return payload
+
+    def _telegram_api_base_url(self) -> str:
+        return (
+            os.getenv("TELEGRAM_API_BASE_URL", "").strip()
+            or (getattr(self._settings.telegram, "api_base_url", "") or "").strip()
+            or self._setting("telegram.api_base_url", TELEGRAM_HOSTED_API_BASE_URL)
+            or TELEGRAM_HOSTED_API_BASE_URL
+        ).rstrip("/")
+
+    def _telegram_uses_local_api(self) -> bool:
+        return self._telegram_api_base_url() != TELEGRAM_HOSTED_API_BASE_URL
 
     def _gdrive_token_data(self) -> dict:
         raw = self._setting("backup.gdrive.token_json")
@@ -543,8 +646,8 @@ class BackupService:
 
     def _refresh_gdrive_token(self, token_data: dict) -> dict:
         refresh_token = token_data.get("refresh_token")
-        client_id = self._setting("backup.gdrive.client_id")
-        client_secret = self._setting("backup.gdrive.client_secret")
+        client_id = self._gdrive_client_id()
+        client_secret = self._gdrive_client_secret()
         if not refresh_token or not client_id or not client_secret:
             return token_data
         try:

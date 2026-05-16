@@ -8,7 +8,14 @@ from celery import Celery
 
 
 def _redis_url() -> str:
-    return os.getenv("REDIS_URL", "redis://redis:6379/0")
+    if os.getenv("REDIS_URL", "").strip():
+        return os.getenv("REDIS_URL", "").strip()
+    try:
+        from app.core.config import get_settings
+
+        return get_settings().redis.url
+    except Exception:
+        return "redis://redis:6379/0"
 
 
 celery_app = Celery(

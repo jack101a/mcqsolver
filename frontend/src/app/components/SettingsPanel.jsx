@@ -127,8 +127,6 @@ export function SettingsPanel({
     gdriveClientSecret: "",
   });
   const [backupBusy, setBackupBusy] = useState("");
-  const [gdriveAuthCode, setGdriveAuthCode] = useState("");
-  const [gdriveRedirectUri, setGdriveRedirectUri] = useState(() => `${window.location.origin}/admin/settings`);
 
   useEffect(() => {
     refreshBackupHealth();
@@ -165,6 +163,15 @@ export function SettingsPanel({
   };
 
   const latestBackup = backupHealth?.last_backup || null;
+  const backupSetupHint = (() => {
+    if (!backupHealth) return "";
+    if (!backupHealth.telegram_token_set) return "Set Telegram bot token in Telegram Bot settings.";
+    if (!backupHealth.telegram_channel_set) return "Set Telegram backup channel ID.";
+    if (!backupHealth.telegram_local_api) return "Using hosted Bot API; large files will be sent in parts.";
+    if (!backupHealth.gdrive_client_configured) return "Set Google Drive OAuth client env to enable sign-in.";
+    if (!backupHealth.gdrive_connected) return "Sign in with Google to connect Drive uploads.";
+    return "";
+  })();
 
   const saveBackupSettings = async () => {
     setBackupBusy("settings");
@@ -176,8 +183,6 @@ export function SettingsPanel({
           "backup.telegram_channel_id": backupSettings.telegramChannelId,
           "backup.gdrive.enabled": backupSettings.gdriveEnabled ? "true" : "false",
           "backup.gdrive.folder_id": backupSettings.gdriveFolderId,
-          "backup.gdrive.client_id": backupSettings.gdriveClientId,
-          "backup.gdrive.client_secret": backupSettings.gdriveClientSecret,
         }
       });
       await refreshBackupHealth();
@@ -246,9 +251,28 @@ export function SettingsPanel({
     setBackupBusy("telegram");
     try {
       const result = await apiPostJson(`/admin/api/system/backups/${latestBackup.id}/telegram`, {});
-      showToast(result.ok ? "Latest backup sent to Telegram" : "Telegram upload failed", result.ok ? "success" : "error");
+      showToast(result.ok ? "Latest backup sent to Telegram" : (result.error || "Telegram upload failed"), result.ok ? "success" : "error");
     } catch (e) {
       showToast(e.message || "Telegram upload failed", "error");
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
+  const testTelegramBackupDestination = async () => {
+    setBackupBusy("telegram-test");
+    try {
+      const payload = {
+        save: true,
+      };
+      if (backupSettings.telegramChannelId.trim()) {
+        payload.chat_id = backupSettings.telegramChannelId.trim();
+      }
+      const result = await apiPostJson("/admin/api/system/backups/telegram/test", payload);
+      showToast(result.ok ? "Telegram destination test sent" : (result.error || "Telegram destination test failed"), result.ok ? "success" : "error");
+      await refreshBackupHealth();
+    } catch (e) {
+      showToast(e.data?.hint || e.data?.error || e.message || "Telegram destination test failed", "error");
     } finally {
       setBackupBusy("");
     }
@@ -271,33 +295,14 @@ export function SettingsPanel({
   const openDriveAuth = async () => {
     setBackupBusy("drive-auth");
     try {
-      const result = await apiGet(`/admin/api/system/backups/gdrive/auth-url?redirect_uri=${encodeURIComponent(gdriveRedirectUri)}`);
-      if (!result.ok) throw new Error(result.error || "Drive auth URL failed");
-      window.open(result.url, "_blank", "noopener,noreferrer");
-      showToast("Google Drive authorization opened");
+      const redirectUri = `${window.location.origin}/admin/api/system/backups/gdrive/callback`;
+      const result = await apiGet(`/admin/api/system/backups/gdrive/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+      if (!result.ok || !result.url) {
+        throw new Error(result.error || "Google Drive OAuth is not configured");
+      }
+      window.location.href = result.url;
     } catch (e) {
-      showToast(e.message || "Drive authorization failed", "error");
-    } finally {
-      setBackupBusy("");
-    }
-  };
-
-  const exchangeDriveCode = async () => {
-    if (!gdriveAuthCode.trim()) return showToast("Paste the Google authorization code first", "error");
-    setBackupBusy("drive-code");
-    try {
-      const result = await apiPostJson("/admin/api/system/backups/gdrive/exchange", {
-        code: gdriveAuthCode.trim(),
-        redirect_uri: gdriveRedirectUri,
-      });
-      if (!result.ok) throw new Error(result.error || "Drive connection failed");
-      setBackupSettings(prev => ({ ...prev, gdriveEnabled: true }));
-      setGdriveAuthCode("");
-      await refreshBackupHealth();
-      showToast("Google Drive connected");
-    } catch (e) {
-      showToast(e.message || "Drive connection failed", "error");
-    } finally {
+      showToast(e.message || "Google Drive sign-in failed", "error");
       setBackupBusy("");
     }
   };
@@ -639,17 +644,31 @@ export function SettingsPanel({
           </div>
           <div>
             <p className={`text-[10px] uppercase font-bold ${t_textMuted}`}>Telegram</p>
-            <p className={`text-sm ${backupHealth?.telegram_channel_set ? "text-emerald-400" : t_textMuted}`}>
-              {backupHealth?.telegram_channel_set ? "Channel set" : "Not set"}
+            <p className={`text-sm ${backupHealth?.telegram_token_set && backupHealth?.telegram_channel_set ? "text-emerald-400" : t_textMuted}`}>
+              {backupHealth?.telegram_token_set && backupHealth?.telegram_channel_set ? "Ready" : backupHealth?.telegram_channel_set ? "Token missing" : "Not set"}
             </p>
+            <p className={`text-[10px] truncate ${t_textMuted}`}>{backupHealth?.telegram_local_api ? "Local Bot API" : "Hosted Bot API"}</p>
           </div>
           <div>
             <p className={`text-[10px] uppercase font-bold ${t_textMuted}`}>Google Drive</p>
-            <p className={`text-sm ${backupHealth?.gdrive_enabled ? "text-emerald-400" : t_textMuted}`}>
-              {backupHealth?.gdrive_enabled ? "Enabled" : "Disabled"}
+            <p className={`text-sm ${backupHealth?.gdrive_connected ? "text-emerald-400" : t_textMuted}`}>
+              {backupHealth?.gdrive_connected ? "Connected" : backupHealth?.gdrive_client_configured ? "Sign in needed" : "Client missing"}
             </p>
           </div>
         </div>
+
+        {(backupHealth?.telegram_last_error || backupHealth?.gdrive_last_error) && (
+          <div className={`rounded-xl border p-3 mb-5 text-xs space-y-1 ${t_borderLight} ${t_textMuted}`}>
+            {backupHealth?.telegram_last_error && <p>Telegram: {backupHealth.telegram_last_error}</p>}
+            {backupHealth?.gdrive_last_error && <p>Google Drive: {backupHealth.gdrive_last_error}</p>}
+          </div>
+        )}
+
+        {backupSetupHint && (
+          <div className={`rounded-xl border p-3 mb-5 text-xs ${t_borderLight} ${t_textMuted}`}>
+            {backupSetupHint}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
           <div className="space-y-4">
@@ -701,6 +720,10 @@ export function SettingsPanel({
                 {backupBusy === "telegram" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 Send Latest
               </button>
+              <button type="button" onClick={testTelegramBackupDestination} disabled={backupBusy === "telegram-test"} className={glassButton}>
+                {backupBusy === "telegram-test" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                Test Destination
+              </button>
               <label className={`cursor-pointer ${glassButton}`}>
                 {backupBusy === "validate" ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                 Validate Package
@@ -735,49 +758,11 @@ export function SettingsPanel({
                   onChange={(e) => updateBackupSetting("gdriveFolderId", e.target.value)}
                 />
               </div>
-              <div>
-                <label className={`text-xs block mb-1 ${t_textMuted}`}>OAuth Client ID</label>
-                <input
-                  className={glassInput}
-                  value={backupSettings.gdriveClientId}
-                  onChange={(e) => updateBackupSetting("gdriveClientId", e.target.value)}
-                />
-              </div>
-              <div>
-                <label className={`text-xs block mb-1 ${t_textMuted}`}>OAuth Client Secret</label>
-                <input
-                  type="password"
-                  className={glassInput}
-                  value={backupSettings.gdriveClientSecret}
-                  onChange={(e) => updateBackupSetting("gdriveClientSecret", e.target.value)}
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className={`text-xs block mb-1 ${t_textMuted}`}>Redirect URI</label>
-                <input
-                  className={glassInput}
-                  value={gdriveRedirectUri}
-                  onChange={(e) => setGdriveRedirectUri(e.target.value)}
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className={`text-xs block mb-1 ${t_textMuted}`}>Authorization Code</label>
-                <input
-                  className={glassInput}
-                  value={gdriveAuthCode}
-                  onChange={(e) => setGdriveAuthCode(e.target.value)}
-                  placeholder="Paste code after OAuth consent"
-                />
-              </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button type="button" onClick={openDriveAuth} disabled={backupBusy === "drive-auth"} className={glassButton}>
                 {backupBusy === "drive-auth" ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
-                Connect
-              </button>
-              <button type="button" onClick={exchangeDriveCode} disabled={backupBusy === "drive-code"} className={glassButton}>
-                {backupBusy === "drive-code" ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-                Save Token
+                Sign in with Google
               </button>
               <button type="button" onClick={uploadLatestToDrive} disabled={!latestBackup || backupBusy === "drive"} className={`${glassButton} ${!latestBackup ? "opacity-40" : ""}`}>
                 {backupBusy === "drive" ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}

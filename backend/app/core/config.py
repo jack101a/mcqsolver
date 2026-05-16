@@ -68,6 +68,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "telegram": {
         "bot_token": "",              # from @BotFather
         "bot_enabled": False,
+        "api_base_url": "https://api.telegram.org",
     },
     # ── Payments ──────────────────────────────────────────────────────────────
     "payment": {
@@ -190,6 +191,7 @@ class AlertsConfig(BaseModel):
 class TelegramConfig(BaseModel):
     bot_token: str = ""
     bot_enabled: bool = False
+    api_base_url: str = "https://api.telegram.org"
 
 
 class PaymentConfig(BaseModel):
@@ -287,6 +289,7 @@ def get_settings() -> Settings:
     config_dict.setdefault("telegram", {})
     config_dict["telegram"]["bot_token"]   = os.getenv("TELEGRAM_BOT_TOKEN", config_dict["telegram"].get("bot_token", ""))
     config_dict["telegram"]["bot_enabled"] = os.getenv("TELEGRAM_BOT_ENABLED", str(config_dict["telegram"].get("bot_enabled", False))).lower() in ("1", "true", "yes")
+    config_dict["telegram"]["api_base_url"] = os.getenv("TELEGRAM_API_BASE_URL", config_dict["telegram"].get("api_base_url", "https://api.telegram.org"))
 
     config_dict.setdefault("server", {})
     config_dict["server"]["debug"] = os.getenv("DEBUG", str(config_dict["server"].get("debug", False))).lower() in {"1", "true", "yes"}

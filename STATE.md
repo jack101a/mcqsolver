@@ -1,40 +1,43 @@
-# STATE.md - Exam Learning Threshold Controls
+# STATE.md - Plain Compose Rewrite
 
 ## Status
 COMPLETE
 
 ## Active Task
-Made self-learning usage thresholds editable in Admin Exam UI and verified the changes build successfully.
+Rewrote Docker Compose in the user's preferred plain explicit style, without YAML anchors or hidden merges.
 
 ## Last Files Modified
-- `frontend/src/app/components/ExamStatsPanel.jsx`
+- `docker-compose.yml`
 - `TASK.md`
 - `STATE.md`
 
 ## Last Command Run
-`npm --prefix frontend run build`
+`python -c "import yaml; c=yaml.safe_load(open('backend/config/config.yaml', encoding='utf-8')); print(c['storage']['db_type'], c['redis']['url'], c['telegram']['api_base_url'])"`
 
 ## Last Output/Error
 Completed:
-- Confirmed solver already auto-learns through exam feedback and uses learned data at solve time based on:
-  - `exam.learn_min_confidence`
-  - `exam.learn_min_confirmations`
-- Added UI inputs in Exam panel:
-  - `Minimum Confidence (%) for Learned Answer Use`
-  - `Minimum Verified Count for Learned Answer Use`
-- Added normalization/safety:
-  - Confidence is entered as `%` but saved as `0.0..1.0`
-  - Confidence clamped to `0..1`
-  - Verified count clamped to minimum `1`
-- Save action now posts normalized threshold values and refreshes dirty-check baseline.
-- Frontend build verification passed.
+- Removed all `x-` extension blocks and `<<` YAML merges from `docker-compose.yml`.
+- Made each service explicit:
+  - `api`
+  - `worker`
+  - `telegram-bot`
+  - `telegram-bot-api`
+  - `postgres`
+  - `redis`
+- Kept app service env minimal and visible in each service:
+  - `CONFIG_PATH=/app/backend/config/config.yaml`
+  - seed import controls
+- Kept host paths clear through `SA_HELPER_HOST_ROOT`.
 
-Build output:
-- `vite v5.4.21 building for production...`
-- `✓ built in 10.32s`
+Verification:
+- YAML parse passed for `docker-compose.yml` and `backend/config/config.yaml`.
+- Parsed key config values:
+  - `postgresql`
+  - `redis://redis:6379/0`
+  - `http://telegram-bot-api:8081`
+
+Note:
+- Docker is not installed in this workspace, so `docker compose config` could not be run here.
 
 ## Immediate Next Step
-Deploy updated frontend build and test in Admin -> Exam:
-1. Set confidence % and verified count.
-2. Save config.
-3. Run real exam feedback flow and confirm learned answers trigger according to thresholds.
+Use the plain `docker-compose.yml` in Portainer/deployment. App settings remain in mounted `sa_helper/config/config.yaml`.
