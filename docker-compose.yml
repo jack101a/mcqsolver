@@ -18,6 +18,7 @@ x-app-env: &common-env
   EXAM_OCR_CONCURRENCY: ${EXAM_OCR_CONCURRENCY}
   TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
   TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED}
+  START_TELEGRAM_BOT_IN_API: "false"
   TELEGRAM_API_BASE_URL: http://telegram-bot-api:8081
 
 x-app-volumes: &common-volumes
@@ -126,7 +127,8 @@ services:
       - --temp-dir=/tmp/telegram-bot-api
     volumes:
       - ${CONFIG_PATH}/sa_helper/telegram-bot-api:/var/lib/telegram-bot-api
-      - ${CONFIG_PATH}/sa_helper/telegram-bot-api-tmp:/tmp/telegram-bot-api
+    tmpfs:
+      - /tmp/telegram-bot-api
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 8081 || exit 1"]
       interval: 10s
@@ -155,7 +157,7 @@ services:
         wait $$PG_PID
       "
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "PGPASSWORD=$${POSTGRES_PASSWORD} psql -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB} -tAc 'SELECT 1' >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5

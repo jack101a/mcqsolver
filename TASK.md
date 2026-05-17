@@ -1,25 +1,25 @@
-# TASK.md - Use CONFIG_PATH For Host Volumes
+# TASK.md - Fix PostgreSQL Runtime URL Resolution
 
 ## Goal
-Switch Docker Compose host volume paths back to the user's required `${CONFIG_PATH}` variable.
+Fix Docker PostgreSQL auth mismatch by ensuring app DB connection never falls back to hardcoded local credentials when `database_url` is blank.
 
 ## Status
-COMPLETE
+COMPLETED
 
 ## Scope Included
-- Replace `${SA_HELPER_HOST_ROOT:-/srv/ajaxhs/config}` volume prefixes with `${CONFIG_PATH}`.
-- Add `CONFIG_PATH=/srv/ajaxhs/config` to the root `.env`.
-- Keep container environment `CONFIG_PATH: /app/backend/config/config.yaml` for the app config file.
+- Trace DB URL resolution path in config and DB init.
+- Remove hardcoded PostgreSQL fallback URL from runtime DB initialization.
+- Preserve env-driven behavior via `POSTGRES_*` or `DATABASE_URL`.
 
 ## Scope Excluded
-- Renaming the container app config environment key.
-- Changing PUID/PGID support.
+- Docker orchestration changes unrelated to DB URL resolution.
+- Broad refactors in config system.
 
 ## Plan
-- [x] Read AGENTS/STATE/TASK and Compose/env files.
-- [x] Patch Compose and root `.env`.
-- [x] Validate YAML and update `STATE.md`.
+- [x] Inspect config + DB initialization code for DB URL fallback behavior.
+- [x] Apply minimal patch so PostgreSQL mode requires env-derived URL and fails clearly if missing.
+- [x] Verify with targeted runtime checks (success path + missing-password edge case).
 
 ## Verification Approach
-- Parse `docker-compose.yml`.
-- Confirm volume paths use `${CONFIG_PATH}`.
+- Run a Python check with PostgreSQL env vars set to confirm resolved URL uses provided password.
+- Run an edge-case check with missing password to confirm explicit error instead of hidden fallback.

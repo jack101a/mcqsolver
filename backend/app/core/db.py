@@ -7,7 +7,6 @@ It coexists with the existing raw-SQL Database facade for legacy tables.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Generator
 
@@ -50,10 +49,13 @@ def init_db(settings: Settings) -> Engine:
 
     db_type = settings.storage.db_type
     if db_type == "postgresql":
-        url = _build_postgresql_url(
-            settings.storage.database_url
-            or os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/unified_platform")
-        )
+        database_url = settings.storage.database_url
+        if not database_url:
+            raise RuntimeError(
+                "DB_TYPE=postgresql requires DATABASE_URL or POSTGRES_* "
+                "environment variables (including POSTGRES_PASSWORD)."
+            )
+        url = _build_postgresql_url(database_url)
     else:
         url = _build_sqlite_url(settings.storage.sqlite_path)
 
