@@ -1,29 +1,26 @@
-# TASK.md - Admin Dashboard Runtime Import Recovery
+# TASK.md - Remove SQLite Fallback And Stabilize PostgreSQL
 
 ## Goal
-Fix deployed admin dashboard runtime failures caused by missing JSX imports after frontend cleanup.
+Remove silent SQLite fallback behavior so API/worker use PostgreSQL consistently and fail fast on bad DB auth/config.
 
 ## Status
 COMPLETED
 
 ## Scope Included
-- Restore known-good frontend component imports.
-- Add `react/jsx-no-undef` lint coverage to catch missing JSX imports before deployment.
-- Verify frontend build/lint, backend lint/tests, and compose config.
+- Remove legacy fallback behavior from `Database` facade in PostgreSQL mode.
+- Keep sqlite behavior intact when explicitly configured with `DB_TYPE=sqlite`.
+- Verify tests and lint after changes.
 
 ## Scope Excluded
-- Browser-side live production inspection.
-- Changing production secrets or stopping external Telegram bot processes.
+- Compose secret rotation and live production env edits.
+- Worker timeout tuning.
 
 ## Plan
-- [x] Diagnose dashboard crash from missing JSX imports like `NavLink`.
-- [x] Restore frontend app/component imports from known-good history.
-- [x] Add strict JSX undefined lint coverage.
-- [x] Run verification commands.
+- [x] Inspect `Database` facade and startup wiring.
+- [x] Prevent sqlite initialization/connection in PostgreSQL mode.
+- [x] Keep master key initialization in PostgreSQL path.
+- [x] Run test and lint verification.
 
 ## Verification Approach
-- `npm --prefix frontend run build`
-- `npm --prefix frontend run lint`
-- `ruff check backend/app backend/tests`
 - `python -m pytest backend/tests -q`
-- `docker compose config`
+- `ruff check backend/app/core/database.py backend/app/core/container.py`

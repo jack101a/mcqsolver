@@ -1,31 +1,24 @@
-# STATE.md - Admin Dashboard Runtime Import Recovery
+# STATE.md - Remove SQLite Fallback And Stabilize PostgreSQL
 
 ## Status
 COMPLETED
 
 ## Active Task
-Fix production admin dashboard runtime failures reported after deploying image docker-42.
+Remove SQLite fallback behavior that caused API/worker drift and enforce PostgreSQL-only runtime behavior when `DB_TYPE=postgresql`.
 
 ## Last Files Modified
-- `frontend/src/app/App.jsx`
-- `frontend/src/main.jsx`
-- `frontend/src/app/components/*`
-- `frontend/src/app/layout/DashboardLayout.jsx`
-- `frontend/eslint.config.js`
-- `frontend/package.json`
-- `frontend/package-lock.json`
+- `backend/app/core/database.py`
+- `backend/app/core/container.py`
 - `TASK.md`
 - `STATE.md`
 
 ## Last Command Run
-`python -m pytest backend/tests -q`
+`ruff check backend/app/core/database.py backend/app/core/container.py`
 
 ## Last Output/Error
-- Frontend build passed.
-- Frontend lint passed with `--max-warnings=0` and `react/jsx-no-undef`.
+- Pytest passed: `10 passed in 4.70s`.
 - Ruff passed: `All checks passed!`.
-- Pytest passed: `10 passed`.
-- Compose config rendered successfully.
+- Database facade no longer initializes or connects sqlite in PostgreSQL mode.
 
 ## Immediate Next Step
-Push hotfix, wait for the production Docker image to build, redeploy with the new image tag/latest, and hard-refresh `/admin/`.
+Redeploy API + worker with identical Postgres environment values (`DB_TYPE`, `POSTGRES_*`, optional `DATABASE_URL`), then verify logs no longer show `legacy_database_forced_to_sqlite` or Postgres auth failures.
