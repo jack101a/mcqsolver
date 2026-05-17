@@ -9,26 +9,25 @@ import re
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlsplit
-from app.core.paths import get_project_root
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
+from app.core.automation_method_utils import (
+    compose_dynamic_stall_flow,
+    validate_automation_method_payload,
+)
 from app.core.database import Database
+from app.core.paths import get_project_root
 from app.core.security import is_valid_base64
 from app.core.userscript_utils import parse_userscript_meta
-from app.core.automation_method_utils import validate_automation_method_payload, compose_dynamic_stall_flow
-from app.services.exam_feedback_service import process_exam_feedback
-from app.workers.dispatch import run_task_with_timeout
 from app.models.schemas import (
     AutofillFillRequest,
     AutofillFillResponse,
-    AutofillProposeRequest,
+    AutofillRule,
     AutofillRuleProposalRequest,
     AutofillRuleSyncResponse,
-    AutofillRule,
     ExamFeedbackRequest,
     ExamFeedbackResponse,
     ExamSolveRequest,
@@ -43,6 +42,8 @@ from app.models.schemas import (
     SolveResponse,
     VerifyResponse,
 )
+from app.services.exam_feedback_service import process_exam_feedback
+from app.workers.dispatch import run_task_with_timeout
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -94,7 +95,7 @@ def _ensure_user_subscription_allowed(request: Request, service: str, consume_qu
         raise HTTPException(403, "user subscription required")
     session = get_session()
     try:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sub = (
             session.query(UserSubscription)
             .filter(
@@ -193,7 +194,7 @@ def _save_exam_offline_dataset(
     question_dir = dataset_root / "questions" / folder_name
     question_dir.mkdir(parents=True, exist_ok=True)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     question_rel = f"questions/{folder_name}/question.png"
     question_image.save(dataset_root / question_rel, format="PNG")
 
@@ -596,7 +597,6 @@ async def solve(request: Request, payload: SolveRequest) -> SolveResponse:
 async def report(request: Request, payload: ReportRequest) -> dict:
     """Upload a failed captcha image for retraining."""
     _ensure_service_allowed(request, "captcha")
-    container  = request.app.state.container
     key_record = request.state.api_key_record
     key_id     = int(key_record["id"])
 

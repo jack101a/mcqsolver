@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.models import UserApiKey, UserApiKeyDevice, User
-from app.core.security import generate_plain_api_key, hash_api_key, compute_expiry_datetime
+from app.core.models import User, UserApiKey, UserApiKeyDevice
+from app.core.security import compute_expiry_datetime, generate_plain_api_key, hash_api_key
 
 
 class UserKeyService:
@@ -41,7 +40,7 @@ class UserKeyService:
                 session.query(UserApiKey).filter(
                     UserApiKey.user_id == user_id,
                     UserApiKey.status == "active",
-                ).update({"status": "rotated", "revoked_at": datetime.now(timezone.utc)})
+                ).update({"status": "rotated", "revoked_at": datetime.now(UTC)})
 
                 # Generate new key
                 plain = generate_plain_api_key(self._settings)
@@ -55,7 +54,7 @@ class UserKeyService:
                     key_prefix_display=plain[:10] + "...",
                     status="active",
                     key_version=1,
-                    issued_at=datetime.now(timezone.utc),
+                    issued_at=datetime.now(UTC),
                     expires_at=expires_at,
                     created_by_admin_id=created_by_admin_id,
                 )
@@ -89,7 +88,7 @@ class UserKeyService:
                 # Revoke old
                 if old:
                     old.status = "rotated"
-                    old.revoked_at = datetime.now(timezone.utc)
+                    old.revoked_at = datetime.now(UTC)
                     old.revoked_reason = "key_rotation"
 
                 # Issue new
@@ -104,7 +103,7 @@ class UserKeyService:
                     key_prefix_display=plain[:10] + "...",
                     status="active",
                     key_version=old_version + 1,
-                    issued_at=datetime.now(timezone.utc),
+                    issued_at=datetime.now(UTC),
                     expires_at=expires_at,
                     rotated_from_key_id=old_id,
                     created_by_admin_id=created_by_admin_id,
@@ -126,7 +125,7 @@ class UserKeyService:
             if not key:
                 return None
             key.status = "revoked"
-            key.revoked_at = datetime.now(timezone.utc)
+            key.revoked_at = datetime.now(UTC)
             key.revoked_reason = reason
             session.commit()
             session.refresh(key)
@@ -154,7 +153,7 @@ class UserKeyService:
                 return None
 
             # Check expiry
-            if key.expires_at and key.expires_at < datetime.now(timezone.utc):
+            if key.expires_at and key.expires_at < datetime.now(UTC):
                 return None
 
             # Check user status
@@ -163,7 +162,7 @@ class UserKeyService:
                 return None
 
             # Update usage tracking
-            key.last_used_at = datetime.now(timezone.utc)
+            key.last_used_at = datetime.now(UTC)
             key.usage_count = (key.usage_count or 0) + 1
             session.commit()
 
@@ -201,7 +200,7 @@ class UserKeyService:
     ) -> UserApiKeyDevice:
         session = self._session()
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             # Check if already bound
             existing = (
                 session.query(UserApiKeyDevice)
@@ -262,7 +261,7 @@ class UserKeyService:
                 .first()
             )
             if device:
-                device.last_seen_at = datetime.now(timezone.utc)
+                device.last_seen_at = datetime.now(UTC)
                 session.commit()
                 return True
             return False

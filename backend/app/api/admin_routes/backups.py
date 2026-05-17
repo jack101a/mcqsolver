@@ -1,15 +1,18 @@
 from __future__ import annotations
-import json
-import urllib.request
-import urllib.error
-import zipfile
+
 import io
+import json
 import shutil
+import urllib.error
+import urllib.request
+import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
-from fastapi import APIRouter, Request, Form, File, UploadFile, HTTPException, Response
-from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
-from .utils import _admin_guard, _write_auto_backup, _wants_json
+
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+
+from .utils import _admin_guard, _wants_json, _write_auto_backup
 
 router = APIRouter(tags=["admin-backups"])
 
@@ -23,7 +26,7 @@ async def export_field_mappings(request: Request):
         return denied
     container = request.app.state.container
     payload = {
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "field_mappings": container.db.get_all_field_mappings(),
     }
     return Response(
@@ -195,7 +198,7 @@ async def export_master_backup_zip(request: Request):
                 zf.write(file, arcname=f"models/{file.name}")
                 
     buf.seek(0)
-    filename = f"master-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.zip"
+    filename = f"master-backup-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.zip"
     return StreamingResponse(
         buf,
         media_type="application/zip",

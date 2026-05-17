@@ -42,7 +42,7 @@ class CacheService:
         domain: str | None = None,
         field_name: str | None = None,
     ) -> str:
-        raw = f"{task_type}:{mode}:{domain or ''}:{field_name or ''}:{payload_base64}".encode("utf-8")
+        raw = f"{task_type}:{mode}:{domain or ''}:{field_name or ''}:{payload_base64}".encode()
         return hashlib.sha256(raw).hexdigest()
 
     def get(

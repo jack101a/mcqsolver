@@ -1,14 +1,17 @@
 from __future__ import annotations
-import os
+
 import json
+import os
 import re
-from pathlib import Path
-from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File
-from fastapi.responses import RedirectResponse, FileResponse
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
-from app.core.userscript_utils import parse_userscript_meta
+
 from app.core.paths import get_project_root
+from app.core.userscript_utils import parse_userscript_meta
 from app.workers.dispatch import run_task_with_timeout
+
 from .utils import _admin_guard, _write_auto_backup
 
 router = APIRouter(tags=["admin-settings"])
@@ -700,7 +703,7 @@ async def upload_qr_image(request: Request, file: UploadFile = File(...)):
     
     # Save the URL to settings
     container = request.app.state.container
-    qr_url = f"/admin/api/settings/qr-image"
+    qr_url = "/admin/api/settings/qr-image"
     container.db.set_setting("payment.qr_image_url", qr_url)
     
     return {"ok": True, "url": qr_url, "filename": filename}

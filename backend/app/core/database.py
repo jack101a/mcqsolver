@@ -2,25 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
-import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
 from urllib.parse import urlsplit
 
 from app.core.config import Settings
 from app.core.repositories.api_keys import APIKeyRepository
-from app.core.repositories.models import ModelRepository
 from app.core.repositories.autofill import AutofillRepository
+from app.core.repositories.automation_methods import AutomationMethodRepository
 from app.core.repositories.exam import ExamRepository
 from app.core.repositories.exam_attempts import ExamAttemptsRepository
 from app.core.repositories.exam_learned import ExamLearnedRepository
-from app.core.repositories.training import TrainingRepository
+from app.core.repositories.models import ModelRepository
 from app.core.repositories.settings import SettingsRepository
-from app.core.repositories.automation_methods import AutomationMethodRepository
+from app.core.repositories.training import TrainingRepository
 
 logger = logging.getLogger(__name__)
 

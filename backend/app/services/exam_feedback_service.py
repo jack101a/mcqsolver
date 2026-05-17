@@ -6,9 +6,9 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.core.paths import get_project_root
 from app.services.exam_service import ExamService, _b64_to_pil, _djb2_hash, _phash
@@ -53,7 +53,7 @@ def _save_exam_offline_dataset(
     question_dir = dataset_root / "questions" / folder_name
     question_dir.mkdir(parents=True, exist_ok=True)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     question_rel = f"questions/{folder_name}/question.png"
     question_image.save(dataset_root / question_rel, format="PNG")
 
@@ -152,14 +152,14 @@ def _save_exam_offline_dataset_safe(**kwargs: Any) -> None:
         logger.warning("exam_feedback_offline_save_failed", extra={"context": {"error": str(e)}})
 
 
-def _export_learned_to_json_safe(container: "Container") -> None:
+def _export_learned_to_json_safe(container: Container) -> None:
     try:
         container.exam_service.export_learned_to_json()
     except Exception as e:
         logger.warning("exam_feedback_export_failed", extra={"context": {"error": str(e)}})
 
 
-def process_exam_feedback(container: "Container", payload: dict[str, Any]) -> dict[str, Any]:
+def process_exam_feedback(container: Container, payload: dict[str, Any]) -> dict[str, Any]:
     """
     Record exam feedback and learn from correct answers.
 

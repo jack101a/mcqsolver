@@ -4,30 +4,29 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from app.core.config import Settings
 from app.core.database import Database
-from app.core.db import init_db as init_sqlalchemy_db, get_session
+from app.core.db import get_session
+from app.core.db import init_db as init_sqlalchemy_db
 from app.core.paths import get_project_root
 from app.services.alert_service import AlertService
 from app.services.audit_service import AuditService
 from app.services.autofill_service import AutofillService
+from app.services.backup_service import BackupService
 from app.services.cache_service import CacheService
 from app.services.exam_service import ExamService
+from app.services.extension_service import ExtensionService
 from app.services.key_service import KeyService
 from app.services.model_router import ModelRouter
 from app.services.payment_service import PaymentService
+from app.services.rate_limiter import RateLimiter
 from app.services.solver_service import SolverService
 from app.services.subscription_service import SubscriptionService
-from app.services.usage_service import UsageService
-from app.services.user_service import UserService
 from app.services.usage_cycle_service import UsageCycleService
-from app.services.rate_limiter import RateLimiter
-from app.services.backup_service import BackupService
-from app.services.extension_service import ExtensionService
+from app.services.usage_service import UsageService
 from app.services.user_key_service import UserKeyService
-
+from app.services.user_service import UserService
 
 
 @dataclass

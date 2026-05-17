@@ -1,11 +1,13 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.db import get_session
 from app.core.models import AccessControlRecord, AllowedDomainRecord, PlatformSettingRecord
 
 from .base import BaseRepository
+
 
 class SettingsRepository(BaseRepository):
     # Keys and their default values — used when no DB row exists yet
@@ -83,7 +85,7 @@ class SettingsRepository(BaseRepository):
     def set_setting(self, key: str, value: str, description: str | None = None) -> None:
         """Upsert a runtime setting into the DB."""
         desc = description or self._SETTING_DESCRIPTIONS.get(key)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if self._use_sqlalchemy:
             session = get_session()
             try:
@@ -282,7 +284,7 @@ class SettingsRepository(BaseRepository):
             "model_registry": self.db.models.get_model_registry(),
             "field_mappings": self.db.models.get_all_field_mappings(),
             "locators": self.db.autofill.get_approved_locators(),
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
         }
 
     def import_master_setup(self, payload: dict[str, Any]) -> None:
@@ -366,7 +368,7 @@ class SettingsRepository(BaseRepository):
 
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 global_access = bool(payload.get("global_access", True))
                 conn.execute(
                     "INSERT INTO access_control (key, value) VALUES ('global_access', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

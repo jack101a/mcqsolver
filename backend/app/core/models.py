@@ -7,17 +7,16 @@ They coexist with the existing raw-SQL tables (api_keys, usage_events, etc.).
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
-    Float,
     Text,
     UniqueConstraint,
 )
@@ -27,7 +26,7 @@ from app.core.db import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _json_dict(value: str | None) -> dict:

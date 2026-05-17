@@ -1,14 +1,18 @@
 from __future__ import annotations
+
 import base64
 import os
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Any
-from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+
+from fastapi import APIRouter, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from .utils import _admin_guard, _fmt_dt
+
 from app.core.paths import get_project_root
+
+from .utils import _admin_guard, _fmt_dt
 
 router = APIRouter(tags=["admin-analytics"])
 
@@ -82,7 +86,7 @@ async def admin_bootstrap(request: Request):
     
     # Merge UserApiKeys from SQLAlchemy
     from app.core.db import get_session
-    from app.core.models import UserApiKey, User
+    from app.core.models import User, UserApiKey
     session = get_session()
     try:
         user_keys = session.query(UserApiKey).order_by(UserApiKey.issued_at.desc()).all()

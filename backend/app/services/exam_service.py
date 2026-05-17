@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import concurrent.futures
-import hashlib
 import json
 import logging
 import os
@@ -18,7 +17,7 @@ import threading
 import time
 from io import BytesIO
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import numpy as np
@@ -102,7 +101,7 @@ def _hamming(a: str, b: str) -> int:
     return bin(diff).count("1")
 
 
-def _dct_2d(block: "np.ndarray") -> "np.ndarray":
+def _dct_2d(block: np.ndarray) -> np.ndarray:
     """2D Discrete Cosine Transform (Type-II) using numpy."""
     N = block.shape[0]
     n = np.arange(N)
@@ -169,7 +168,7 @@ class ExamService:
 
     HASH_THRESHOLD = 15  # bits — below this is a confident sign match
 
-    def __init__(self, db: "Database", data_dir: Path) -> None:
+    def __init__(self, db: Database, data_dir: Path) -> None:
         self._db       = db
         self._data_dir = data_dir
         self._http     = httpx.AsyncClient(timeout=30.0)

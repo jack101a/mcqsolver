@@ -2,14 +2,11 @@ x-app-env: &common-env
   CONFIG_PATH: /app/backend/config/config.yaml
   APP_ENV: production
   DEBUG: ${DEBUG}
-  AUTH_HASH_SALT: ${AUTH_HASH_SALT:?AUTH_HASH_SALT must be set in .env}
-  ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN must be set in .env}
+  AUTH_HASH_SALT: ${AUTH_HASH_SALT}
+  ADMIN_TOKEN: ${ADMIN_TOKEN}
   ADMIN_USERNAME: ${ADMIN_USERNAME}
-  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD}
   DB_TYPE: postgresql
-  POSTGRES_DB: ${POSTGRES_DB}
-  POSTGRES_USER: ${POSTGRES_USER}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
   REDIS_ENABLED: "true"
   REDIS_URL: redis://redis:6379/0
   LITELLM_ENDPOINT: ${LITELLM_ENDPOINT}
@@ -22,14 +19,17 @@ x-app-env: &common-env
   TELEGRAM_API_BASE_URL: http://telegram-bot-api:8081
 
 x-app-volumes: &common-volumes
-  - ${CONFIG_PATH}/sa_helper/logs:/app/backend/logs
-  - ${CONFIG_PATH}/sa_helper/data:/app/data
-  - ${CONFIG_PATH}/sa_helper/config:/app/backend/config
-  - ${CONFIG_PATH}/sa_helper/import:/app/import
+  - ${CONFIG_PATH:-./runtime}/sa_helper/logs:/app/backend/logs
+  - ${CONFIG_PATH:-./runtime}/sa_helper/data:/app/data
+  - ${CONFIG_PATH:-./runtime}/sa_helper/config:/app/backend/config
+  - ${CONFIG_PATH:-./runtime}/sa_helper/import:/app/import
 
 services:
   api:
-    image: ${SA_HELPER_IMAGE}
+    image: ${SA_HELPER_IMAGE:-mcqsolver:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: sa-helper
     restart: unless-stopped
     init: true
@@ -45,7 +45,7 @@ services:
     environment:
       <<: *common-env
       RUN_ALEMBIC_MIGRATIONS: "true"
-      CREATE_ALL_TABLES: "false"
+      CREATE_ALL_TABLES: "true"
     volumes: *common-volumes
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -54,11 +54,10 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      ajax_network:
-        ipv4_address: 172.60.0.63
+      - ajax_network
 
   worker:
-    image: ${SA_HELPER_IMAGE}
+    image: ${SA_HELPER_IMAGE:-mcqsolver:local}
     container_name: sa-helper-worker
     restart: unless-stopped
     init: true
@@ -89,7 +88,8 @@ services:
       - ajax_network
 
   telegram-bot:
-    image: ${SA_HELPER_IMAGE}
+    profiles: ["telegram"]
+    image: ${SA_HELPER_IMAGE:-mcqsolver:local}
     container_name: sa-helper-telegram-bot
     restart: unless-stopped
     init: true
@@ -114,6 +114,7 @@ services:
       - ajax_network
 
   telegram-bot-api:
+    profiles: ["telegram"]
     image: aiogram/telegram-bot-api:latest
     container_name: sa-helper-telegram-bot-api
     restart: unless-stopped
@@ -126,9 +127,8 @@ services:
       - --dir=/var/lib/telegram-bot-api
       - --temp-dir=/tmp/telegram-bot-api
     volumes:
-      - ${CONFIG_PATH}/sa_helper/telegram-bot-api:/var/lib/telegram-bot-api
-    tmpfs:
-      - /tmp/telegram-bot-api
+      - ${CONFIG_PATH:-./runtime}/sa_helper/telegram-bot-api:/var/lib/telegram-bot-api
+      - ${CONFIG_PATH:-./runtime}/sa_helper/telegram-bot-api-tmp:/tmp/telegram-bot-api
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 8081 || exit 1"]
       interval: 10s
@@ -147,17 +147,19 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ${CONFIG_PATH}/sa_helper/postgres:/var/lib/postgresql/data
+      - ${CONFIG_PATH:-./runtime}/sa_helper/postgres:/var/lib/postgresql/data
     command: >
       bash -c "
         docker-entrypoint.sh postgres &
         PG_PID=$$!
-        until pg_isready -U $$POSTGRES_USER; do sleep 1; done
-        psql -U $$POSTGRES_USER -d $$POSTGRES_DB -c \"ALTER USER $$POSTGRES_USER WITH PASSWORD '$$POSTGRES_PASSWORD';\"
+        until pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB; do sleep 1; done
+        psql -U $$POSTGRES_USER -d $$POSTGRES_DB \
+          -v postgres_password=\"$$POSTGRES_PASSWORD\" \
+          -c \"ALTER USER $$POSTGRES_USER WITH PASSWORD :'postgres_password';\"
         wait $$PG_PID
       "
     healthcheck:
-      test: ["CMD-SHELL", "PGPASSWORD=$${POSTGRES_PASSWORD} psql -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB} -tAc 'SELECT 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -177,7 +179,7 @@ services:
       - --maxmemory-policy
       - allkeys-lru
     volumes:
-      - ${CONFIG_PATH}/sa_helper/redis:/data
+      - ${CONFIG_PATH:-./runtime}/sa_helper/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -188,4 +190,4 @@ services:
 
 networks:
   ajax_network:
-    external: true
+    name: ${COMPOSE_PROJECT_NAME:-mcqsolver}_network

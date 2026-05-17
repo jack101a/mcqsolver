@@ -1,8 +1,7 @@
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 import PropTypes from "prop-types";
-import { BrainCircuit, Inbox } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
-import { EmptyState } from "./EmptyState";
 
 export function ModelsPanel({
   models,

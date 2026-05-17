@@ -43,9 +43,15 @@ model:
 
 storage:
   db_type: postgresql
-  # Leave blank in Docker. The app builds this from POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD.
+  # Leave blank to auto-build URL from the postgres_* keys below.
   database_url: ""
   sqlite_path: backend/logs/app.db
+  import_path: import
+  postgres_db: sa_helper
+  postgres_user: sa_helper
+  postgres_password: sa_helper_dev_password
+  postgres_host: postgres
+  postgres_port: "5432"
 
 redis:
   enabled: true

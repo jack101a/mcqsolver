@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.models import SubscriptionPlan, UserSubscription, User
-
+from app.core.models import SubscriptionPlan, User, UserSubscription
 
 PLAN_DEFAULTS = [
     {
@@ -120,7 +118,7 @@ class SubscriptionService:
                     "services_json": _json(item["services"]),
                     "service_limits_json": _json(limits),
                     "is_active": True,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 }
                 if plan:
                     for key, value in values.items():
@@ -190,7 +188,7 @@ class SubscriptionService:
         try:
             q = session.query(SubscriptionPlan)
             if active_only:
-                q = q.filter(SubscriptionPlan.is_active == True)
+                q = q.filter(SubscriptionPlan.is_active)
             return q.order_by(SubscriptionPlan.price_amount).all()
         finally:
             session.close()
@@ -208,7 +206,7 @@ class SubscriptionService:
                     key, value = "service_limits_json", _json(value)
                 if hasattr(plan, key):
                     setattr(plan, key, value)
-            plan.updated_at = datetime.now(timezone.utc)
+            plan.updated_at = datetime.now(UTC)
             session.commit()
             session.refresh(plan)
             return plan
@@ -232,7 +230,7 @@ class SubscriptionService:
             if not plan:
                 raise ValueError(f"Plan {plan_id} not found")
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             sub = UserSubscription(
                 user_id=user_id,
                 plan_id=plan_id,
@@ -300,7 +298,7 @@ class SubscriptionService:
             if not sub:
                 return None
             sub.status = "cancelled"
-            sub.updated_at = datetime.now(timezone.utc)
+            sub.updated_at = datetime.now(UTC)
             session.commit()
             session.refresh(sub)
             return sub
@@ -317,13 +315,13 @@ class SubscriptionService:
             if not sub:
                 return None
             sub.status = "expired"
-            sub.updated_at = datetime.now(timezone.utc)
+            sub.updated_at = datetime.now(UTC)
 
             # Also expire the user
             user = session.query(User).filter(User.id == sub.user_id).first()
             if user:
                 user.status = "expired"
-                user.updated_at = datetime.now(timezone.utc)
+                user.updated_at = datetime.now(UTC)
 
             session.commit()
             session.refresh(sub)

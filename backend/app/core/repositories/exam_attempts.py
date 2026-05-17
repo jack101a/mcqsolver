@@ -1,5 +1,6 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func
@@ -35,7 +36,7 @@ class ExamAttemptsRepository(BaseRepository):
             )
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 cursor = conn.execute(
                     """
                     INSERT INTO exam_attempts
@@ -67,7 +68,7 @@ class ExamAttemptsRepository(BaseRepository):
                 processing_ms=processing_ms,
                 domain=domain,
                 question_num=question_num,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
             session.add(row)
             session.commit()

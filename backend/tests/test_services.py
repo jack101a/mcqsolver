@@ -1,12 +1,12 @@
-import unittest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
-import tempfile
 import json
-import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock
 
 from app.services.cache_service import CacheService
 from app.services.exam_service import ExamService
+
 
 class TestCacheService(unittest.TestCase):
     def setUp(self):

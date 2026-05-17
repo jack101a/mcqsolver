@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 import json as _json
 from typing import Any
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+
 from .utils import _admin_guard
 
 router = APIRouter(tags=["admin-autofill"])

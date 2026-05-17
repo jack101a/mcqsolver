@@ -1,6 +1,8 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Any
+
 from sqlalchemy import case
 
 from app.core.db import get_session
@@ -13,6 +15,7 @@ from app.core.models import (
 )
 
 from .base import BaseRepository
+
 
 class ModelRepository(BaseRepository):
     def _model_to_dict(self, row: ModelRegistryRecord) -> dict[str, Any]:
@@ -147,7 +150,7 @@ class ModelRepository(BaseRepository):
         if self._use_sqlalchemy:
             session = get_session()
             try:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 row = ModelRegistryRecord(
                     ai_model_name=ai_model_name,
                     version=version,
@@ -171,7 +174,7 @@ class ModelRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 cursor = conn.execute(
                     """
                     INSERT INTO model_registry (ai_model_name, version, task_type, ai_runtime, ai_model_filename, status, lifecycle_state, notes, created_at, updated_at)
@@ -266,7 +269,7 @@ class ModelRepository(BaseRepository):
                     row.task_type = task_type
                     row.notes = notes
                     row.lifecycle_state = lifecycle_state
-                    row.updated_at = datetime.now(timezone.utc).isoformat()
+                    row.updated_at = datetime.now(UTC).isoformat()
                 session.commit()
                 return
             except Exception:
@@ -276,7 +279,7 @@ class ModelRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     UPDATE model_registry
@@ -304,7 +307,7 @@ class ModelRepository(BaseRepository):
         if self._use_sqlalchemy:
             session = get_session()
             try:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 row = (
                     session.query(FieldMappingRecord)
                     .filter(
@@ -342,7 +345,7 @@ class ModelRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     INSERT INTO field_mappings (
@@ -418,7 +421,7 @@ class ModelRepository(BaseRepository):
                     row.target_data_type = target_data_type
                     row.target_selector = target_selector
                     row.ai_model_id = ai_model_id
-                    row.created_at = datetime.now(timezone.utc).isoformat()
+                    row.created_at = datetime.now(UTC).isoformat()
                 session.commit()
                 return
             except Exception:
@@ -428,7 +431,7 @@ class ModelRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     UPDATE field_mappings
@@ -795,7 +798,7 @@ class ModelRepository(BaseRepository):
                     proposed_field_name=proposed_field_name,
                     reported_by=reported_by,
                     status="pending",
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 ))
                 session.commit()
                 return
@@ -806,7 +809,7 @@ class ModelRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 exists = conn.execute(
                     """
                     SELECT id FROM field_mapping_proposals
@@ -1116,7 +1119,7 @@ class ModelRepository(BaseRepository):
                 if not row:
                     return
                 from_state = row.lifecycle_state
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 row.lifecycle_state = to_state
                 row.updated_at = now
                 session.add(ModelLifecycleEventRecord(
@@ -1143,7 +1146,7 @@ class ModelRepository(BaseRepository):
                 if not row:
                     return
                 from_state = row["lifecycle_state"]
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     "UPDATE model_registry SET lifecycle_state = ?, updated_at = ? WHERE id = ?",
                     (to_state, now, ai_model_id),

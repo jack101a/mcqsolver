@@ -1,12 +1,14 @@
 from __future__ import annotations
-from datetime import datetime, timezone
-from typing import Any
+
 import hashlib as _hashlib
+from datetime import UTC, datetime
+from typing import Any
 
 from app.core.db import get_session
 from app.core.models import AutofillRuleProposalRecord, LocatorRecord
 
 from .base import BaseRepository
+
 
 class AutofillRepository(BaseRepository):
     def _proposal_to_dict(self, row: AutofillRuleProposalRecord) -> dict[str, Any]:
@@ -43,7 +45,7 @@ class AutofillRepository(BaseRepository):
         submitted_at: str,
     ) -> dict[str, Any]:
         """Insert a new rule proposal (idempotent). Returns the row as dict."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if self._use_sqlalchemy:
             session = get_session()
             try:
@@ -116,7 +118,7 @@ class AutofillRepository(BaseRepository):
 
     def approve_autofill_proposal(self, proposal_id: int, reviewed_by: str = "admin") -> str:
         """Approve a proposal, generate a server_rule_id, return it."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if self._use_sqlalchemy:
             session = get_session()
             try:
@@ -162,7 +164,7 @@ class AutofillRepository(BaseRepository):
 
     def reject_autofill_proposal(self, proposal_id: int, reviewed_by: str = "admin") -> None:
         """Reject a proposal."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if self._use_sqlalchemy:
             session = get_session()
             try:
@@ -311,7 +313,7 @@ class AutofillRepository(BaseRepository):
                         image_selector=img,
                         input_selector=inp,
                         status="pending",
-                        created_at=datetime.now(timezone.utc).isoformat(),
+                        created_at=datetime.now(UTC).isoformat(),
                     ))
                     session.commit()
                 return
@@ -321,7 +323,7 @@ class AutofillRepository(BaseRepository):
             finally:
                 session.close()
         with self._lock, self.connect() as conn:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             # If the exact proposal already exists and is pending, ignore
             exists = conn.execute("SELECT id FROM locators WHERE domain=? AND image_selector=? AND input_selector=? AND status='pending'", (clean_domain, img, inp)).fetchone()
             if not exists:
@@ -406,7 +408,7 @@ class AutofillRepository(BaseRepository):
 
     def bulk_import_approved_rules(self, rules: list[dict]) -> int:
         """Import rules (metadata only). Returns count of newly inserted rules."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         count = 0
         if self._use_sqlalchemy:
             session = get_session()
@@ -465,7 +467,7 @@ class AutofillRepository(BaseRepository):
 
     def bulk_replace_approved_locators(self, locators: dict[str, dict[str, str]]) -> int:
         """Replace approved locators with the provided domain map."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         count = 0
         if self._use_sqlalchemy:
             session = get_session()

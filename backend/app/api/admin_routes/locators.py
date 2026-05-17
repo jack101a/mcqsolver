@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 from typing import Any
-from fastapi import APIRouter, Request, Form, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
+
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+
 from .utils import _admin_guard
 
 router = APIRouter(tags=["admin-locators"])

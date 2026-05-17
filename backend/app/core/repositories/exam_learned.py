@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func
@@ -75,7 +75,7 @@ class ExamLearnedRepository(BaseRepository):
             )
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 existing = conn.execute(
                     """
                     SELECT id, confidence, seen_count, verified_count, wrong_count, correct_option
@@ -219,7 +219,7 @@ class ExamLearnedRepository(BaseRepository):
     ) -> dict[str, Any]:
         session = get_session()
         try:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             existing = (
                 session.query(ExamLearnedRecord)
                 .filter(ExamLearnedRecord.question_hash == question_hash)
@@ -339,7 +339,7 @@ class ExamLearnedRepository(BaseRepository):
                     return None
                 if selected_option and int(row["correct_option"]) != int(selected_option):
                     return dict(row)
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 new_confidence = max(0.0, float(row["confidence"]) - confidence_delta)
                 new_wrong = int(row["wrong_count"] or 0) + 1
                 new_status = "rejected" if new_wrong >= 2 or new_confidence < 0.5 else "training"
@@ -378,7 +378,7 @@ class ExamLearnedRepository(BaseRepository):
             row.confidence = new_confidence
             row.wrong_count = new_wrong
             row.status = new_status
-            row.last_seen = datetime.now(timezone.utc).isoformat()
+            row.last_seen = datetime.now(UTC).isoformat()
             session.commit()
             return {
                 "action": "penalized",

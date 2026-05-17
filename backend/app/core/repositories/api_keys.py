@@ -1,10 +1,11 @@
 from __future__ import annotations
+
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
 from sqlalchemy import func
 
-from .base import BaseRepository
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.models import (
@@ -16,6 +17,9 @@ from app.core.models import (
     UsageEventRecord,
 )
 from app.core.security import hash_api_key
+
+from .base import BaseRepository
+
 
 class APIKeyRepository(BaseRepository):
     DEFAULT_SERVICES = {
@@ -60,7 +64,7 @@ class APIKeyRepository(BaseRepository):
         if self._use_sqlalchemy:
             session = get_session()
             try:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 row = ApiKeyRecord(
                     name=name,
                     key_hash=key_hash,
@@ -81,7 +85,7 @@ class APIKeyRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 cursor = conn.execute(
                     """
                     INSERT INTO api_keys (name, key_hash, key_type, enabled, created_at, expires_at, revoked_at)
@@ -118,7 +122,7 @@ class APIKeyRepository(BaseRepository):
                 if not row:
                     return False
                 row.enabled = 0
-                row.revoked_at = datetime.now(timezone.utc).isoformat()
+                row.revoked_at = datetime.now(UTC).isoformat()
                 session.commit()
                 return True
             except Exception:
@@ -128,7 +132,7 @@ class APIKeyRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 result = conn.execute(
                     """
                     UPDATE api_keys
@@ -149,7 +153,7 @@ class APIKeyRepository(BaseRepository):
                 if not row:
                     return False
                 row.enabled = 0
-                row.revoked_at = datetime.now(timezone.utc).isoformat()
+                row.revoked_at = datetime.now(UTC).isoformat()
                 session.commit()
                 return True
             except Exception:
@@ -159,7 +163,7 @@ class APIKeyRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 result = conn.execute(
                     """
                     UPDATE api_keys
@@ -221,7 +225,7 @@ class APIKeyRepository(BaseRepository):
                     model_used=model_used,
                     domain=domain,
                     ip=ip,
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 ))
                 session.commit()
                 return
@@ -232,7 +236,7 @@ class APIKeyRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     INSERT INTO usage_events (key_id, task_type, status, processing_ms, model_used, domain, ip, created_at)
@@ -565,7 +569,7 @@ class APIKeyRepository(BaseRepository):
                 key_row = session.get(ApiKeyRecord, key_id)
                 if key_row and key_row.key_type == "master":
                     return True
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 row = session.get(ApiKeyDeviceBindingRecord, key_id)
                 if not row:
                     session.add(ApiKeyDeviceBindingRecord(
@@ -592,7 +596,7 @@ class APIKeyRepository(BaseRepository):
             key_row = conn.execute("SELECT key_type FROM api_keys WHERE id = ?", (key_id,)).fetchone()
             if key_row and key_row["key_type"] == "master":
                 return True
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             with self.connect() as conn:
                 row = conn.execute(
@@ -679,7 +683,7 @@ class APIKeyRepository(BaseRepository):
                     import secrets
                     raw = self._MASTER_KEY_PREFIX + secrets.token_hex(24)
                     key_hash = hash_api_key(raw, get_settings().auth.hash_salt)
-                    now = datetime.now(timezone.utc).isoformat()
+                    now = datetime.now(UTC).isoformat()
                     key_row = ApiKeyRecord(
                         name="Master Key",
                         key_hash=key_hash,
@@ -731,7 +735,7 @@ class APIKeyRepository(BaseRepository):
 
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 cursor = conn.execute(
                     """
                     INSERT INTO api_keys (name, key_hash, key_type, enabled, created_at, expires_at, revoked_at)

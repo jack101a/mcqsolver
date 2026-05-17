@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import io
 import json
 import logging
 import os
-import shutil
 import sqlite3
 import time
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from sqlalchemy import delete, inspect, insert, select
+from sqlalchemy import delete, insert, select
 
 from app.core.config import Settings
 from app.core.db import Base, get_engine, get_session
@@ -74,7 +72,7 @@ def _xor_stream(data: bytes, key: str) -> bytes:
     while len(out) < len(data):
         out.extend(hmac.new(secret, counter.to_bytes(8, "big"), hashlib.sha256).digest())
         counter += 1
-    return bytes(a ^ b for a, b in zip(data, out))
+    return bytes(a ^ b for a, b in zip(data, out, strict=False))
 
 
 class BackupService:
@@ -88,7 +86,7 @@ class BackupService:
         self._backup_dir.mkdir(parents=True, exist_ok=True)
 
     def full_backup(self) -> dict:
-        started = datetime.now(timezone.utc)
+        started = datetime.now(UTC)
         backup_id = f"backup_{started.strftime('%Y%m%d_%H%M%S')}"
         result = {
             "backup_id": backup_id,
@@ -100,7 +98,7 @@ class BackupService:
             package = self.create_package(backup_id=backup_id)
             result.update({
                 "status": "completed",
-                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": datetime.now(UTC).isoformat(),
                 "file_path_or_uri": str(package["path"]),
                 "checksum": package["checksum"],
                 "size_bytes": package["size_bytes"],
@@ -121,7 +119,7 @@ class BackupService:
             return result
 
     def create_package(self, backup_id: str | None = None) -> dict:
-        created = datetime.now(timezone.utc)
+        created = datetime.now(UTC)
         backup_id = backup_id or f"backup_{created.strftime('%Y%m%d_%H%M%S')}"
         payload = self._build_payload(backup_id, created)
         clear_bytes = self._zip_payload(payload)
@@ -209,7 +207,7 @@ class BackupService:
             backups.append({
                 "id": item.stem,
                 "name": item.name,
-                "created": datetime.fromtimestamp(item.stat().st_mtime, tz=timezone.utc).isoformat(),
+                "created": datetime.fromtimestamp(item.stat().st_mtime, tz=UTC).isoformat(),
                 "size_bytes": item.stat().st_size,
                 "path": str(item),
                 "encrypted": item.suffix == ".upbak",
@@ -282,7 +280,7 @@ class BackupService:
             return {"ok": False, "error": "TELEGRAM_BOT_TOKEN or telegram.bot_token is not configured"}
         if not target:
             return {"ok": False, "error": "backup.telegram_channel_id is not configured"}
-        message = text or f"SA Helper backup test message\nUTC: {datetime.now(timezone.utc).isoformat()}"
+        message = text or f"SA Helper backup test message\nUTC: {datetime.now(UTC).isoformat()}"
         try:
             payload = self._telegram_post(token, "sendMessage", data={"chat_id": target, "text": message})
             self._set_setting("backup.telegram_last_error", "")

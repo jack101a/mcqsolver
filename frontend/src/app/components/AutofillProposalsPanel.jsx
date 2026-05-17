@@ -2,13 +2,12 @@
  * AutofillProposalsPanel
  * UX: status tabs + search + inline rule_json edit + delete + approve/reject
  */
-import React, { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef } from "react";
 import PropTypes from "prop-types";
-import { Zap, Pencil, Trash2, CheckCircle2, XCircle, Save, X, ChevronDown, ChevronRight, Inbox } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useDebounce } from "../hooks/useDebounce";
-import { EmptyState } from "./EmptyState";
 
 const STATUS_TABS = ["all", "pending", "approved", "rejected"];
 const STATUS_COLORS = {

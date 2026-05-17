@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from threading import Lock
 from typing import Any
 

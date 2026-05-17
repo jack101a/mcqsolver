@@ -1,5 +1,6 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.db import get_session
@@ -11,6 +12,7 @@ from app.core.models import (
 )
 
 from .base import BaseRepository
+
 
 class TrainingRepository(BaseRepository):
     def _sample_to_dict(self, row: RetrainSampleRecord) -> dict[str, Any]:
@@ -71,7 +73,7 @@ class TrainingRepository(BaseRepository):
                     field_name=field_name,
                     reported_by=reported_by,
                     status="queued",
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 )
                 session.add(row)
                 session.commit()
@@ -84,7 +86,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 cursor = conn.execute(
                     """
                     INSERT INTO retrain_samples (domain, image_path, task_type, field_name, reported_by, status, created_at)
@@ -125,7 +127,7 @@ class TrainingRepository(BaseRepository):
                     row.status = "labeled"
                     row.label_text = label_text
                     row.labeled_by = labeled_by
-                    row.labeled_at = datetime.now(timezone.utc).isoformat()
+                    row.labeled_at = datetime.now(UTC).isoformat()
                 session.commit()
                 return
             except Exception:
@@ -135,7 +137,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     UPDATE retrain_samples
@@ -154,7 +156,7 @@ class TrainingRepository(BaseRepository):
                 if row:
                     row.status = "rejected"
                     row.labeled_by = labeled_by
-                    row.labeled_at = datetime.now(timezone.utc).isoformat()
+                    row.labeled_at = datetime.now(UTC).isoformat()
                 session.commit()
                 return
             except Exception:
@@ -164,7 +166,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     UPDATE retrain_samples
@@ -205,7 +207,7 @@ class TrainingRepository(BaseRepository):
         if self._use_sqlalchemy:
             session = get_session()
             try:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 row = (
                     session.query(FailedPayloadLabelRecord)
                     .filter(FailedPayloadLabelRecord.filename == filename)
@@ -233,7 +235,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     INSERT INTO failed_payload_labels (filename, domain, ai_guess, corrected_text, updated_at)
@@ -292,7 +294,7 @@ class TrainingRepository(BaseRepository):
         if self._use_sqlalchemy:
             session = get_session()
             try:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 row = RetrainJobRecord(
                     status="queued",
                     scheduled_for=scheduled_for or now,
@@ -312,7 +314,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 when = scheduled_for or now
                 cursor = conn.execute(
                     """
@@ -355,7 +357,7 @@ class TrainingRepository(BaseRepository):
                 row = session.get(RetrainJobRecord, job_id)
                 if row:
                     row.status = "running"
-                    row.started_at = datetime.now(timezone.utc).isoformat()
+                    row.started_at = datetime.now(UTC).isoformat()
                 session.commit()
                 return
             except Exception:
@@ -365,7 +367,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     "UPDATE retrain_jobs SET status='running', started_at=? WHERE id=?",
                     (now, job_id),
@@ -379,7 +381,7 @@ class TrainingRepository(BaseRepository):
                 row = session.get(RetrainJobRecord, job_id)
                 if row:
                     row.status = "completed"
-                    row.finished_at = datetime.now(timezone.utc).isoformat()
+                    row.finished_at = datetime.now(UTC).isoformat()
                     row.produced_ai_model_id = produced_ai_model_id
                     row.total_samples = total_samples
                 session.commit()
@@ -391,7 +393,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     UPDATE retrain_jobs
@@ -409,7 +411,7 @@ class TrainingRepository(BaseRepository):
                 row = session.get(RetrainJobRecord, job_id)
                 if row:
                     row.status = "failed"
-                    row.finished_at = datetime.now(timezone.utc).isoformat()
+                    row.finished_at = datetime.now(UTC).isoformat()
                     row.error_message = error_message[:500]
                 session.commit()
                 return
@@ -420,7 +422,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     UPDATE retrain_jobs
@@ -530,7 +532,7 @@ class TrainingRepository(BaseRepository):
                     domain=domain,
                     image_path=image_path,
                     reported_by=reported_by,
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 ))
                 session.commit()
                 return
@@ -541,7 +543,7 @@ class TrainingRepository(BaseRepository):
                 session.close()
         with self._lock:
             with self.connect() as conn:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 conn.execute(
                     "INSERT INTO active_learning (domain, image_path, reported_by, created_at) VALUES (?, ?, ?, ?)",
                     (domain, image_path, reported_by, now)

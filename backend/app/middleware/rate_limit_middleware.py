@@ -47,7 +47,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         key_record = getattr(request.state, "api_key_record", None)
-        api_key = getattr(request.state, "api_key", "anonymous")
+        getattr(request.state, "api_key", "anonymous")
         ip = request.client.host if request.client else "unknown"
         key_id = int(key_record.get("id")) if key_record else None
         now = time.time()

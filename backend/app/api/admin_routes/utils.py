@@ -1,16 +1,17 @@
 from __future__ import annotations
-import base64
+
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
-import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote_plus
-from fastapi import Request, Response, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+
+from fastapi import Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 _TRUSTED_IDENTITY_HEADERS = (
     "cf-access-authenticated-user-email",
@@ -44,7 +45,7 @@ def _admin_session_cookie(request: Request) -> str:
     """Create deterministic admin session cookie value."""
     settings = request.app.state.container.settings
     auth_secret = f"{settings.auth.admin_username}:{settings.auth.admin_password}"
-    raw = f"{settings.auth.hash_salt}:{auth_secret}".encode("utf-8")
+    raw = f"{settings.auth.hash_salt}:{auth_secret}".encode()
     return hashlib.sha256(raw).hexdigest()
 
 def _is_request_secure(request: Request) -> bool:
@@ -117,8 +118,8 @@ def _write_auto_backup(container, reason: str) -> None:
         _BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
         payload = container.db.export_master_setup()
         payload["backup_reason"] = reason
-        payload["backup_created_at"] = datetime.now(timezone.utc).isoformat()
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        payload["backup_created_at"] = datetime.now(UTC).isoformat()
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         snapshot = _BACKUPS_DIR / f"master-setup-{stamp}.json"
         snapshot.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         (_BACKUPS_DIR / "latest-master-setup.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -11,7 +11,8 @@ from urllib.parse import quote
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
+
 from app.core.paths import get_project_root
 
 _DEFAULT_CONFIG: dict[str, Any] = {
@@ -44,7 +45,17 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "onnx_height": 54,
         "onnx_width": 250,
     },
-    "storage": {"sqlite_path": "backend/logs/app.db", "database_url": "", "db_type": "sqlite"},
+    "storage": {
+        "sqlite_path": "backend/logs/app.db",
+        "database_url": "",
+        "db_type": "sqlite",
+        "import_path": "import",
+        "postgres_db": "sa_helper",
+        "postgres_user": "sa_helper",
+        "postgres_password": "sa_helper_dev_password",
+        "postgres_host": "postgres",
+        "postgres_port": "5432",
+    },
     "redis": {"enabled": False, "url": "redis://localhost:6379/0", "prefix": "up:"},
     "retrain": {"worker_enabled": False},
     # ── Exam service config ────────────────────────────────────────────────────
@@ -152,6 +163,12 @@ class StorageConfig(BaseModel):
     # PostgreSQL support (used when DB_TYPE=postgresql)
     database_url: str = ""
     db_type: str = "sqlite"  # "sqlite" | "postgresql"
+    import_path: str = "import"
+    postgres_db: str = "sa_helper"
+    postgres_user: str = "sa_helper"
+    postgres_password: str = "sa_helper_dev_password"
+    postgres_host: str = "postgres"
+    postgres_port: str = "5432"
 
     @field_validator("db_type")
     @classmethod
@@ -245,12 +262,26 @@ def _resolve_path(raw_path: str) -> Path:
     return (get_project_root() / raw_path).resolve()
 
 
-def _postgres_url_from_env() -> str:
-    database = os.getenv("POSTGRES_DB", "sa_helper").strip() or "sa_helper"
-    user = os.getenv("POSTGRES_USER", "sa_helper").strip() or "sa_helper"
-    password = os.getenv("POSTGRES_PASSWORD", "").strip()
-    host = os.getenv("POSTGRES_HOST", "postgres").strip() or "postgres"
-    port = os.getenv("POSTGRES_PORT", "5432").strip() or "5432"
+def _env_or_default(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    value = value.strip()
+    return value if value else default
+
+
+def _postgres_url_from_values(
+    database: str,
+    user: str,
+    password: str,
+    host: str,
+    port: str,
+) -> str:
+    database = database.strip() or "sa_helper"
+    user = user.strip() or "sa_helper"
+    password = password.strip()
+    host = host.strip() or "postgres"
+    port = port.strip() or "5432"
     if not password:
         return ""
     return (
@@ -277,10 +308,38 @@ def get_settings() -> Settings:
     config_dict.setdefault("storage", {})
     sqlite_raw = os.getenv("SQLITE_PATH", config_dict["storage"].get("sqlite_path", ""))
     config_dict["storage"]["sqlite_path"] = str(_resolve_path(sqlite_raw))
+    import_raw = config_dict["storage"].get("import_path", "import")
+    config_dict["storage"]["import_path"] = str(_resolve_path(import_raw))
+    config_dict["storage"]["postgres_db"] = _env_or_default(
+        "POSTGRES_DB",
+        str(config_dict["storage"].get("postgres_db", "sa_helper")),
+    )
+    config_dict["storage"]["postgres_user"] = _env_or_default(
+        "POSTGRES_USER",
+        str(config_dict["storage"].get("postgres_user", "sa_helper")),
+    )
+    config_dict["storage"]["postgres_password"] = _env_or_default(
+        "POSTGRES_PASSWORD",
+        str(config_dict["storage"].get("postgres_password", "sa_helper_dev_password")),
+    )
+    config_dict["storage"]["postgres_host"] = _env_or_default(
+        "POSTGRES_HOST",
+        str(config_dict["storage"].get("postgres_host", "postgres")),
+    )
+    config_dict["storage"]["postgres_port"] = _env_or_default(
+        "POSTGRES_PORT",
+        str(config_dict["storage"].get("postgres_port", "5432")),
+    )
     config_dict["storage"]["db_type"] = os.getenv("DB_TYPE", config_dict["storage"].get("db_type", "sqlite")).lower()
     database_url = os.getenv("DATABASE_URL", config_dict["storage"].get("database_url", ""))
     if config_dict["storage"]["db_type"] == "postgresql" and not database_url:
-        database_url = _postgres_url_from_env()
+        database_url = _postgres_url_from_values(
+            database=config_dict["storage"]["postgres_db"],
+            user=config_dict["storage"]["postgres_user"],
+            password=config_dict["storage"]["postgres_password"],
+            host=config_dict["storage"]["postgres_host"],
+            port=config_dict["storage"]["postgres_port"],
+        )
     config_dict["storage"]["database_url"] = database_url
 
     config_dict.setdefault("redis", {})

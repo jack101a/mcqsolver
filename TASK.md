@@ -1,25 +1,36 @@
-# TASK.md - Fix PostgreSQL Runtime URL Resolution
+# TASK.md - Full Codebase Standardization (Industry Baseline)
 
 ## Goal
-Fix Docker PostgreSQL auth mismatch by ensuring app DB connection never falls back to hardcoded local credentials when `database_url` is blank.
+Standardize the full repository (backend, frontend, extension, infra, and root governance) to an industry baseline for consistency, maintainability, and deployment readiness.
 
 ## Status
 COMPLETED
 
 ## Scope Included
-- Trace DB URL resolution path in config and DB init.
-- Remove hardcoded PostgreSQL fallback URL from runtime DB initialization.
-- Preserve env-driven behavior via `POSTGRES_*` or `DATABASE_URL`.
+- Add repository-wide formatting/editor standards.
+- Add backend quality standards (lint, test config, tooling entrypoint).
+- Add frontend quality standards (linting and scripts).
+- Add CI workflow to enforce quality checks on pull requests/pushes.
+- Update root docs to reflect full-codebase standards workflow.
+- Reduce lint debt and enable strict quality gating.
 
 ## Scope Excluded
-- Docker orchestration changes unrelated to DB URL resolution.
-- Broad refactors in config system.
+- Rewriting business logic.
+- Framework migration.
+- Kubernetes/platform migration.
 
 ## Plan
-- [x] Inspect config + DB initialization code for DB URL fallback behavior.
-- [x] Apply minimal patch so PostgreSQL mode requires env-derived URL and fails clearly if missing.
-- [x] Verify with targeted runtime checks (success path + missing-password edge case).
+- [x] Establish shared repository standards files.
+- [x] Add backend lint/test toolchain config.
+- [x] Add frontend lint scripts + eslint config.
+- [x] Add/standardize CI checks for backend + frontend + compose validation.
+- [x] Run local verification commands and record results.
+- [x] Reduce lint debt with automated + targeted fixes.
+- [x] Switch checks to strict pass/fail gating.
 
 ## Verification Approach
-- Run a Python check with PostgreSQL env vars set to confirm resolved URL uses provided password.
-- Run an edge-case check with missing password to confirm explicit error instead of hidden fallback.
+- `ruff check backend/app backend/tests`
+- `python -m compileall backend/app`
+- `python -m pytest backend/tests -q`
+- `npm --prefix frontend run lint`
+- `docker compose config`

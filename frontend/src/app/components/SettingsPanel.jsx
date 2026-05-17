@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { Download, Upload, Save, Bell, Globe, Shield, Loader2, Inbox, Send, CreditCard, Image, RotateCcw, DatabaseBackup, CheckCircle2, Cloud, KeyRound } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
 import { apiGet, apiPostForm, apiPostJson } from "../../api/client";
-import { EmptyState } from "./EmptyState";
 
 export function SettingsPanel({
   apiKeys,

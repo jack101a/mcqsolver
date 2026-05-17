@@ -5,8 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fastapi import FastAPI
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.admin_routes import settings as settings_routes

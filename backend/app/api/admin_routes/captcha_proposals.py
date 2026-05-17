@@ -5,9 +5,12 @@ The approve flow mirrors the old tata_captcha-test project:
   - If no model_id is sent, returns 400 with list of available models
 """
 from __future__ import annotations
+
 from typing import Any
-from fastapi import APIRouter, Request, HTTPException
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+
 from .utils import _admin_guard
 
 router = APIRouter(tags=["admin-captcha-proposals"])

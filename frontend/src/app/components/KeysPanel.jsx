@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Key, Plus, ShieldCheck, XCircle, Inbox, Users, Loader2 } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { useThemeContext } from "../context/ThemeContext";
-import { EmptyState } from "./EmptyState";
 import { apiGet } from "../../api/client";
 
 export function KeysPanel({

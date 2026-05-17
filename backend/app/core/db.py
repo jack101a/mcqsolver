@@ -8,11 +8,10 @@ It coexists with the existing raw-SQL Database facade for legacy tables.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Generator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker, declarative_base
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.core.config import Settings
 

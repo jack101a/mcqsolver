@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import html
-from typing import Any
-
-import os, signal, subprocess, sys, shlex
+import shlex
+import subprocess
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -271,7 +271,7 @@ async def system_health(request: Request) -> Any:
 
     # Count totals
     from app.core.db import get_session
-    from app.core.models import User, PaymentRecord, UserSubscription
+    from app.core.models import PaymentRecord, User, UserSubscription
 
     session = get_session()
     try:
