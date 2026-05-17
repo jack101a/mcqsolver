@@ -19,6 +19,7 @@ RUN apt-get update || (sleep 5 && apt-get update) && apt-get install -y \
     libglib2.0-0 \
     zip \
     curl \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -33,10 +34,18 @@ COPY backend/config/ /opt/sa-helper-seed/backend/config/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --from=frontend-builder /frontend/dist /app/frontend/dist
 
-# Link the built dashboard to the template folder
-RUN mkdir -p /app/backend/app/templates && \
+# Pre-create all runtime-writable directories and set ownership to default app user (1000:1000).
+# This allows the container to run as any PUID:PGID without hitting permission denied
+# on paths that are internal to the image layer (not covered by volume mounts).
+RUN mkdir -p \
+        /app/backend/app/templates \
+        /app/backend/app/static/extensions \
+        /app/backend/logs \
+        /app/backend/config \
+        /app/data \
+        /app/import && \
     cp /app/frontend/dist/index.html /app/backend/app/templates/admin.html && \
-    mkdir -p /app/backend/logs /app/data && \
+    chown -R 1001:1001 /app /opt/sa-helper-seed && \
     chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Environment variables
